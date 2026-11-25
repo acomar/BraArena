@@ -1,7 +1,9 @@
-# AI Interview POC status
+# BraArena AI Interview POC
 
-Implemented: isolated PostgreSQL and Node API in Docker Compose; interview template creation/listing; interview link token generation; transcript retrieval endpoint; basic admin bearer authentication.
+Stack agreed: Angular + Python FastAPI + PostgreSQL + Docker Compose.
 
-Not yet implemented: React admin UI, candidate room, realtime voice, transcript ingestion, summary/scoring, configurable guardrails, public HTTPS proxy, deployment and automated tests.
+Implemented in branch: FastAPI health endpoint, template create/list, candidate interview token creation, transcript read; Angular starter form; PostgreSQL container.
 
-Security: keep secrets out of Git. API port is bound to loopback only. Do not expose this prototype to candidates until authentication, token expiry, HTTPS, privacy and abuse controls are implemented.
+Not implemented: realtime voice, candidate interview room, transcript ingestion, evaluation/scoring, configurable guardrails, HTTPS proxy, deployment, integration tests. Do not expose publicly yet.
+
+The previous Node files remain in the branch temporarily but are not used by Docker. No secrets should be committed.
