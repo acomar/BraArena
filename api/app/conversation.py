@@ -1,5 +1,6 @@
 """Turn-taking for audio-only WebRTC, driven by events on the provider sideband."""
 import json
+from time import monotonic
 
 ADVANCE = {
     'type': 'function', 'name': 'proxima_etapa',
@@ -26,8 +27,15 @@ def stage_prompt(definition, index):
     ])
 
 
+# A semantic endpoint can be emitted between two clauses. Let a resumed utterance
+# supersede the pending response before requesting any model output.
+RESUME_WINDOW_SECONDS = 1.8
+
+
 class Conversation:
-    def __init__(self, definition):
+    def __init__(self, definition, clock=monotonic):
+        self.clock = clock
+        self.reply_after = 0
         self.definition = definition
         self.index = 0
         self.started = False
@@ -49,6 +57,8 @@ class Conversation:
 
     def respond(self, remaining, *, after_answer=False):
         if after_answer and remaining <= 30:
+            if self.definition['blocks'][-1]['type'] == 'closing':
+                self.index = len(self.definition['blocks'])-1
             self.closing = True
         prompt = stage_prompt(self.definition, self.index)
         if self.closing:
@@ -66,6 +76,8 @@ class Conversation:
 
     def next_response(self, ready, remaining):
         if not ready or self.in_response or self.speaking_item is not None:
+            return None
+        if self.pending and self.clock() < self.reply_after:
             return None
         if not self.started:
             self.started = True
@@ -86,6 +98,7 @@ class Conversation:
             if self.speaking_item in (None, self.last_commit):
                 self.speaking_item = None
                 self.pending = True
+                self.reply_after = self.clock()+RESUME_WINDOW_SECONDS
         elif kind == 'output_audio_buffer.stopped':
             self.played_audio = event.get('response_id')
         elif kind == 'response.done':

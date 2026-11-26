@@ -130,13 +130,18 @@ async def observe(ident,definition,call,socket,control):
     conversation = Conversation(definition)
     ready_by = loop.time()+20
     reason='observer_lost'
+    def persist_stage(previous):
+        if conversation.index != previous:
+            with connection() as conn:
+                conn.execute("UPDATE interviews SET block_index=%s WHERE id=%s",(conversation.index,ident))
+
     try:
         while True:
             remaining=(control['deadline']-datetime.now(timezone.utc)).total_seconds()
             if conversation.started and loop.time()-control['last_seen']>25:
                 control['end']='connection_timeout'
             if control['end'] or remaining<=0:
-                reason=control['end'] or 'timebox'
+                reason='timebox' if remaining<=0 else control['end']
                 break
             if not conversation.started and not control['ready'] and loop.time() >= ready_by:
                 reason='connection_timeout'
@@ -144,8 +149,10 @@ async def observe(ident,definition,call,socket,control):
             if conversation.finished:
                 reason='stages_completed'
                 break
+            previous = conversation.index
             answer = conversation.next_response(control['ready'],remaining)
             if answer:
+                persist_stage(previous)
                 await socket.send(json.dumps(answer))
             try:
                 event=json.loads(await asyncio.wait_for(socket.recv(),timeout=.35))
@@ -166,9 +173,7 @@ async def observe(ident,definition,call,socket,control):
                         control['end']='budget'
             previous = conversation.index
             actions = conversation.event(event, remaining)
-            if conversation.index != previous:
-                with connection() as conn:
-                    conn.execute("UPDATE interviews SET block_index=%s WHERE id=%s",(conversation.index,ident))
+            persist_stage(previous)
             if not control['end']:
                 for action in actions:
                     await socket.send(json.dumps(action))
