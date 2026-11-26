@@ -3,6 +3,7 @@ import os
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 import psycopg
@@ -31,6 +32,15 @@ async def lifespan(app: FastAPI):
             id bigserial PRIMARY KEY, interview_id uuid REFERENCES interviews(id),
             speaker text NOT NULL CHECK(speaker IN ('candidate','assistant')),
             content text NOT NULL, created_at timestamptz DEFAULT now())""")
+    with connection() as conn:
+        conn.execute("ALTER TABLE transcript_turns ADD COLUMN IF NOT EXISTS event_id text")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS transcript_event_unique ON transcript_turns(interview_id,event_id)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS realtime_usage (
+            interview_id uuid NOT NULL REFERENCES interviews(id), response_id text NOT NULL,
+            usage jsonb NOT NULL, source text NOT NULL DEFAULT 'browser_unverified',
+            created_at timestamptz DEFAULT now(), PRIMARY KEY(interview_id,response_id))""")
+        conn.execute("ALTER TABLE interviews ADD COLUMN IF NOT EXISTS started_at timestamptz")
+        conn.execute("ALTER TABLE interviews ADD COLUMN IF NOT EXISTS ended_at timestamptz")
     yield
 
 app = FastAPI(title="BraArena AI Interview API", lifespan=lifespan)
@@ -150,7 +160,7 @@ def candidate_session(interview_id: UUID, consent: CandidateConsent):
             "type": "realtime",
             "model": "gpt-realtime",
             "instructions": "\\n".join(instructions),
-            "audio": {"output": {"voice": "marin"}},
+            "audio": {"input": {"transcription": {"model": "gpt-4o-mini-transcribe", "language": "pt"}}, "output": {"voice": "marin"}},
         }
     }
     req = urllib.request.Request(
@@ -169,9 +179,62 @@ def candidate_session(interview_id: UUID, consent: CandidateConsent):
         raise HTTPException(502, "Realtime credential missing")
     with connection() as conn:
         conn.execute(
-            "UPDATE interviews SET status='in_progress' WHERE id=%s AND status='scheduled'",
+            "UPDATE interviews SET status='in_progress', started_at=COALESCE(started_at,now()) WHERE id=%s AND status='scheduled'",
             (interview_id,),
         )
     return {"clientSecret": secret, "model": "gpt-realtime",
             "durationMinutes": definition.get("durationMinutes", 30),
             "recordingEnabled": False}
+
+
+# Browser telemetry is provisional and must never be treated as verified billing
+# or trusted evidence for hiring decisions. A server-side Realtime observer is pending.
+class CandidateEvent(BaseModel):
+    token: str = Field(min_length=20, max_length=256)
+    eventId: str = Field(min_length=1, max_length=200)
+    kind: Literal["transcript", "usage"]
+    speaker: Literal["candidate", "assistant"] | None = None
+    content: str | None = Field(default=None, max_length=20000)
+    usage: dict | None = None
+
+@app.post("/api/candidate/{interview_id}/events")
+def candidate_event(interview_id: UUID, event: CandidateEvent):
+    candidate_row(interview_id, event.token)
+    with connection() as conn:
+        row = conn.execute("SELECT status FROM interviews WHERE id=%s FOR UPDATE", (interview_id,)).fetchone()
+        if row["status"] != "in_progress":
+            raise HTTPException(409, "Interview not active")
+        if event.kind == "transcript":
+            if not event.speaker or not event.content or not event.content.strip():
+                raise HTTPException(422, "Missing transcript")
+            conn.execute("""INSERT INTO transcript_turns(interview_id,speaker,content,event_id)
+                VALUES(%s,%s,%s,%s) ON CONFLICT(interview_id,event_id) DO NOTHING""",
+                (interview_id,event.speaker,event.content,event.eventId))
+        else:
+            if not event.usage or len(json.dumps(event.usage)) > 8192:
+                raise HTTPException(422, "Invalid usage")
+            conn.execute("""INSERT INTO realtime_usage(interview_id,response_id,usage)
+                VALUES(%s,%s,%s::jsonb) ON CONFLICT DO NOTHING""",
+                (interview_id,event.eventId,json.dumps(event.usage)))
+    return {"ok": True, "verified": False}
+
+class CandidateFinish(BaseModel):
+    token: str = Field(min_length=20, max_length=256)
+
+@app.post("/api/candidate/{interview_id}/finish")
+def candidate_finish(interview_id: UUID, body: CandidateFinish):
+    candidate_row(interview_id, body.token)
+    with connection() as conn:
+        row = conn.execute("""UPDATE interviews SET status='completed', ended_at=now()
+            WHERE id=%s AND status='in_progress' RETURNING id""",(interview_id,)).fetchone()
+        if not row:
+            current = conn.execute("SELECT status FROM interviews WHERE id=%s",(interview_id,)).fetchone()
+            if current["status"] != "completed":
+                raise HTTPException(409,"Interview not active")
+    return {"ok": True, "telemetryStatus": "unverified"}
+
+@app.get("/api/interviews/{interview_id}/usage", dependencies=[Depends(admin)])
+def interview_usage(interview_id: UUID):
+    with connection() as conn:
+        rows = conn.execute("SELECT response_id,usage,source,created_at FROM realtime_usage WHERE interview_id=%s ORDER BY created_at",(interview_id,)).fetchall()
+    return {"status":"unverified","events":rows}
