@@ -1,0 +1,5 @@
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/2 * * * * root cd /opt/braarena && ./maintenance.sh
+*/10 * * * * root cd /opt/braarena && python3 pull-release.py
+41 3 * * * root cd /opt/braarena && ./backup.sh

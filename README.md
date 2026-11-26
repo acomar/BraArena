@@ -1,5 +1,11 @@
 # BraArena
 
+## Plataforma de entrevistas por voz
+
+O painel Angular configura as entrevistas, a sala do candidato e as revisões humanas. A API FastAPI persiste configurações, consentimentos, transcrições, gravações autorizadas e custos no PostgreSQL. Consulte o [guia da POC](POC_STATUS.md) e a [operação da VPS](deploy/README.md).
+
+## Edição local original
+
 Aplicação **local-first** para entrevistas técnicas de Angular, com playbook do entrevistador, whiteboard, editor, compilação online e avaliação em um fluxo simples.
 
 ## Abrir a aplicação

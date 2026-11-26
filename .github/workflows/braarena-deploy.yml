@@ -1,64 +1,57 @@
-name: BraArena manual deployment
+name: BraArena POC
 on:
   workflow_dispatch:
+  push:
+    branches: [feat/ai-interview-poc]
 permissions:
   contents: read
 concurrency:
   group: braarena-production
   cancel-in-progress: false
 jobs:
-  build:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Backend and PostgreSQL
+        run: |
+          docker build -t braarena-api:development api
+          docker compose -f compose.test.yml up --abort-on-container-exit --exit-code-from test
+      - name: Angular and Playwright
+        run: |
+          docker build -t braarena-web:development web
+          docker build -t braarena-browser:test tests
+          docker compose -f tests/compose.browser.yml up --abort-on-container-exit --exit-code-from browser
+      - name: Save verified images
+        run: docker save braarena-api:development braarena-web:development | gzip -1 > /tmp/braarena-images.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-images
+          path: /tmp/braarena-images.tar.gz
+          retention-days: 1
+  publish:
+    if: github.ref == 'refs/heads/feat/ai-interview-poc'
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feat/ai-interview-poc
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: ./api
-          push: true
-          tags: ghcr.io/acomar/braarena-api:${{ github.sha }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: ./web
-          push: true
-          tags: ghcr.io/acomar/braarena-web:${{ github.sha }}
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment: braarena-production
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: feat/ai-interview-poc
-      - name: Deploy via verified SSH
+      - uses: actions/download-artifact@v4
+        with: {name: verified-images}
+      - name: Publish the tested release
         env:
-          SSH_KEY: ${{ secrets.BRAARENA_SSH_KEY }}
-          KNOWN_HOSTS: ${{ secrets.BRAARENA_KNOWN_HOSTS }}
-          HOST: ${{ secrets.BRAARENA_HOST }}
-          USER: ${{ secrets.BRAARENA_USER }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          : "${SSH_KEY:?Missing SSH key}"
-          : "${KNOWN_HOSTS:?Missing known hosts}"
-          : "${HOST:?Missing host}"
-          : "${USER:?Missing user}"
-          install -m 700 -d ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
-          ssh "${opts[@]}" "$USER@$HOST" 'mkdir -p /opt/braarena'
-          scp "${opts[@]}" deploy/compose.production.yml "$USER@$HOST:/opt/braarena/compose.production.yml"
-          scp "${opts[@]}" deploy/deploy-remote.sh "$USER@$HOST:/opt/braarena/deploy-remote.sh"
-          printf '%s\n' "$GH_TOKEN" | ssh "${opts[@]}" "$USER@$HOST" "cd /opt/braarena && sh deploy-remote.sh '$GITHUB_SHA' '$GITHUB_ACTOR'"
+          docker load -i braarena-images.tar.gz
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for component in api web; do
+            tag="ghcr.io/acomar/braarena-$component:$GITHUB_SHA"
+            docker tag "braarena-$component:development" "$tag"
+            docker push "$tag"
+          done
+          # The VPS can retrieve the identical images without long-lived SSH or registry credentials.
+          gh release view "poc-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "poc-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "POC ${GITHUB_SHA:0:8}" --notes "Imagens verificadas pelo CI."
+          gh release upload "poc-$GITHUB_SHA" braarena-images.tar.gz --repo "$GITHUB_REPOSITORY" --clobber

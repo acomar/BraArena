@@ -18,7 +18,7 @@ services:
     environment:
       DATABASE_URL: postgresql://interview:${POSTGRES_PASSWORD}@db:5432/interview
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:
       db:
         condition: service_healthy
@@ -27,7 +27,7 @@ services:
     build: ./web
     restart: unless-stopped
     depends_on: [api]
-    ports: ["127.0.0.1:8080:80"]
+    ports: ["127.0.0.1:18082:80"]
     networks: [internal]
 volumes:
   interview_data:

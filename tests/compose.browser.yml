@@ -1,0 +1,32 @@
+name: braarena-browser
+services:
+  db:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: test, POSTGRES_PASSWORD: test, POSTGRES_DB: browser}
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U test -d browser"]
+      interval: 2s
+      retries: 15
+  api:
+    image: braarena-api:development
+    environment:
+      DATABASE_URL: postgresql://test:test@db/browser
+      ADMIN_TOKEN: ephemeral-browser-test-token-only
+    depends_on:
+      db: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://localhost:3000/health')"]
+      interval: 2s
+      retries: 15
+  web:
+    image: braarena-web:development
+    depends_on:
+      api: {condition: service_healthy}
+  browser:
+    image: braarena-browser:test
+    mem_limit: 650m
+    environment:
+      BASE_URL: http://web
+      ADMIN_TOKEN: ephemeral-browser-test-token-only
+    depends_on: [web]

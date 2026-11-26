@@ -1,20 +1,31 @@
 #!/bin/sh
 set -eu
 cd /opt/braarena
+exec 9>.deploy.lock
+flock 9
 sha="${1:?Missing release SHA}"
-actor="${2:?Missing GitHub actor}"
-case "$sha" in *[!a-f0-9]*) exit 2;; esac
+actor="${2:-}"
+case "$sha" in *[!a-f0-9]*|'') exit 2;; esac
 [ "${#sha}" -eq 40 ] || exit 2
-case "$actor" in *[!a-zA-Z0-9_-]*) exit 2;; esac
-test -f .env || { echo "Missing /opt/braarena/.env"; exit 1; }
 umask 077
-docker_config="$(mktemp -d)"
-export DOCKER_CONFIG="$docker_config"
-trap 'rm -rf "$docker_config"' EXIT
-printf '%s\n' '{"auths":{"ghcr.io":{}}}' > "$DOCKER_CONFIG/config.json"
-docker login ghcr.io -u "$actor" --password-stdin
+previous=$(cat .release-sha 2>/dev/null || true)
 export RELEASE_SHA="$sha"
-docker compose -f compose.production.yml pull api web
-docker compose -f compose.production.yml up -d --no-build --remove-orphans
-docker compose -f compose.production.yml ps
-printf '%s\n' "$sha" > .release-sha
+if [ -n "$actor" ]; then
+  DOCKER_CONFIG=$(mktemp -d)
+  export DOCKER_CONFIG
+  trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+  docker login ghcr.io -u "$actor" --password-stdin
+  docker compose -f compose.production.yml pull api web
+fi
+if [ -n "$previous" ]; then ./backup.sh; fi
+if docker compose -f compose.production.yml up -d --no-build --wait --wait-timeout 100 &&
+   curl -fsS --max-time 10 "$(cat .public-url)/health" >/dev/null; then
+  echo "$sha" > .release-sha.next
+  mv .release-sha.next .release-sha
+  if [ -n "$previous" ] && [ "$previous" != "$sha" ]; then echo "$previous" > .previous-sha; fi
+else
+  if [ -n "$previous" ]; then
+    RELEASE_SHA="$previous" docker compose -f compose.production.yml up -d --no-build --wait
+  fi
+  exit 1
+fi
