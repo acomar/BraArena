@@ -117,6 +117,22 @@ class App {
     cancelAnimationFrame(this.animationFrame); tick();
   }
   voiceMessage = '';
+  private eventQueue: Promise<void> = Promise.resolve();
+  private telemetryFailed = false;
+  private sessionStarted = false;
+  private candidateEndpoint(action: string) {
+    return '/api/candidate/' + encodeURIComponent(window.location.pathname.split('/')[2]) + '/' + action;
+  }
+  private enqueueEvent(payload: object) {
+    const token = new URLSearchParams(window.location.search).get('token');
+    this.eventQueue = this.eventQueue.then(async () => {
+      const response = await fetch(this.candidateEndpoint('events'), {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token,...payload})
+      });
+      if (!response.ok) throw new Error('Telemetry rejected');
+    }).catch(() => { this.telemetryFailed = true; });
+  }
   private peer: RTCPeerConnection | null = null;
   private microphone: MediaStream | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -141,6 +157,8 @@ class App {
     if (!id || !token) { this.voiceMessage = 'Link inválido.'; return; }
     try {
       this.connecting = true;
+      this.telemetryFailed = false;
+      this.eventQueue = Promise.resolve();
       this.robotState = 'connecting';
       this.audioContext = new AudioContext();
       await this.audioContext.resume();
@@ -151,6 +169,7 @@ class App {
       });
       if (!response.ok) throw new Error('Não foi possível iniciar a sessão.');
       const session = await response.json();
+      this.sessionStarted = true;
       this.microphone = await navigator.mediaDevices.getUserMedia({audio:true});
       this.peer = new RTCPeerConnection();
       for (const track of this.microphone.getTracks()) this.peer.addTrack(track, this.microphone);
@@ -167,7 +186,11 @@ class App {
       };
       channel.onmessage = event => {
         try {
-          const type = JSON.parse(event.data).type;
+          const data = JSON.parse(event.data);
+          const type = data.type;
+          if (type === 'conversation.item.input_audio_transcription.completed' && data.transcript && data.item_id) this.enqueueEvent({kind:'transcript',eventId:'candidate:'+data.item_id+':'+(data.content_index ?? 0),speaker:'candidate',content:data.transcript});
+          if (type === 'response.output_audio_transcript.done' && data.transcript && data.item_id) this.enqueueEvent({kind:'transcript',eventId:'assistant:'+data.item_id+':'+(data.content_index ?? 0),speaker:'assistant',content:data.transcript});
+          if (type === 'response.done' && data.response?.id && data.response?.usage) this.enqueueEvent({kind:'usage',eventId:data.response.id,usage:data.response.usage});
           if (type === 'error') this.voiceMessage = 'Erro na conversa.';
           if (type === 'input_audio_buffer.speech_started') this.robotState = 'listening';
           if (type === 'input_audio_buffer.speech_stopped' || type === 'response.created') this.robotState = 'thinking';
@@ -189,11 +212,11 @@ class App {
       this.connecting = false;
       this.timer = setTimeout(() => this.stopVoice(), Math.max(1, Number(session.durationMinutes))*60000);
     } catch (error) {
-      this.stopVoice();
+      await this.stopVoice();
       this.voiceMessage = error instanceof Error ? error.message : 'Falha na conexão.';
     }
   }
-  stopVoice() {
+  async stopVoice() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.peer?.close(); this.peer = null;
@@ -204,7 +227,18 @@ class App {
     if (this.audioContext) void this.audioContext.close();
     this.audioContext = null;
     this.robotState = 'idle'; this.mouthHeight = 5;
-    this.voiceMessage = 'Sessão encerrada. Relatório e transcrição ainda não são persistidos.';
+    if (!this.sessionStarted) return;
+    this.sessionStarted = false;
+    this.connecting = true;
+    this.voiceMessage = 'Salvando entrevista...';
+    try {
+      await this.eventQueue;
+      const token = new URLSearchParams(window.location.search).get('token');
+      const response = await fetch(this.candidateEndpoint('finish'), {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
+      if (!response.ok) throw new Error('Falha ao finalizar');
+      this.voiceMessage = this.telemetryFailed ? 'Entrevista encerrada com dados incompletos.' : 'Entrevista encerrada. Dados preliminares enviados.';
+    } catch { this.voiceMessage = 'Falha ao salvar o encerramento.'; }
+    finally { this.connecting = false; }
   }
 
 
