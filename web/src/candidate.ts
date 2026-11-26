@@ -1,4 +1,4 @@
-import {Component, OnDestroy, OnInit} from '@angular/core';
+import {ChangeDetectorRef, Component, inject, OnDestroy, OnInit} from '@angular/core';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
 import {errorMessage, request} from './http';
@@ -8,6 +8,7 @@ import {errorMessage, request} from './http';
   styleUrls:['./robot.css'],templateUrl:'./candidate.html'
 })
 export class Candidate implements OnInit, OnDestroy {
+  private view=inject(ChangeDetectorRef);
   title='Sala de entrevista'; message='Carregando convite…'; active=false; busy=false; done=false;
   available=false; configured=false; minutes=0; recording=false; consent=false; recordConsent=false;
   robotState='idle'; mouthHeight=5; remaining=0; level=0; testing=false;
@@ -24,7 +25,7 @@ export class Candidate implements OnInit, OnDestroy {
       this.title=info.title;this.recording=!!info.recording;this.minutes=info.minutes;
       this.available=true;this.configured=info.voiceConfigured;
       this.message=this.configured?'':'A conversa por voz aguarda configuração pelo gestor.';
-    }catch(e){this.message=errorMessage(e);}
+    }catch(e){this.message=errorMessage(e);}finally{this.view.markForCheck();}
   }
   async testAudio(){
     if(this.testing || this.busy || this.active) return;
@@ -37,9 +38,9 @@ export class Candidate implements OnInit, OnDestroy {
       const analyser=ctx.createAnalyser();ctx.createMediaStreamSource(stream).connect(analyser);
       const values=new Float32Array(analyser.fftSize);this.message='Fale para testar o microfone. Verifique se ouviu o sinal.';
       let peak=0;
-      for(let i=0;i<24;i++){analyser.getFloatTimeDomainData(values);this.level=Math.min(100,Math.round(Math.max(...values.map(Math.abs))*400));peak=Math.max(peak,this.level);await new Promise(r=>setTimeout(r,100));}
+      for(let i=0;i<24;i++){analyser.getFloatTimeDomainData(values);this.level=Math.min(100,Math.round(Math.max(...values.map(Math.abs))*400));peak=Math.max(peak,this.level);this.view.markForCheck();await new Promise(r=>setTimeout(r,100));}
       this.message=peak>1?'Microfone recebeu áudio. Se ouviu o sinal, a saída também está pronta.':'Microfone conectado. Nenhum som detectado no teste.';
-    }catch(e){this.message=errorMessage(e);}finally{stream?.getTracks().forEach(t=>t.stop());await ctx?.close();this.testing=false;this.level=0;}
+    }catch(e){this.message=errorMessage(e);}finally{stream?.getTracks().forEach(t=>t.stop());await ctx?.close();this.testing=false;this.level=0;this.view.markForCheck();}
   }
   private attach(stream:MediaStream){
     const ctx=this.ctx!;
@@ -48,7 +49,7 @@ export class Candidate implements OnInit, OnDestroy {
     const remote=ctx.createMediaStreamSource(stream),analyser=ctx.createAnalyser();
     analyser.fftSize=512;remote.connect(analyser);const samples=new Float32Array(512);
     const animate=()=>{analyser.getFloatTimeDomainData(samples);const rms=Math.sqrt(samples.reduce((s,v)=>s+v*v,0)/samples.length);
-      this.mouthHeight=Math.min(32,5+rms*180);this.frame=requestAnimationFrame(animate);};animate();
+      this.mouthHeight=Math.min(32,5+rms*180);this.view.markForCheck();this.frame=requestAnimationFrame(animate);};animate();
     if(this.recordConsent && this.recording){
       const mixed=ctx.createMediaStreamDestination();remote.connect(mixed);ctx.createMediaStreamSource(this.mic!).connect(mixed);
       this.recorder=new MediaRecorder(mixed.stream,{mimeType:'audio/webm;codecs=opus',audioBitsPerSecond:32000});
@@ -75,7 +76,7 @@ export class Candidate implements OnInit, OnDestroy {
       };
       await this.peer.setRemoteDescription({type:'answer',sdp:session.sdp});
       this.active=true;this.message='Entrevista em andamento.';this.tick=window.setInterval(()=>void this.update(),1000);void this.update();
-    }catch(e){await this.stop();this.message=errorMessage(e);}finally{this.busy=false;}
+    }catch(e){await this.stop();this.message=errorMessage(e);}finally{this.busy=false;this.view.markForCheck();}
   }
   async update(){
     if(this.polling || !this.active)return;
@@ -85,7 +86,7 @@ export class Candidate implements OnInit, OnDestroy {
       this.robotState=status.state;
       if(status.status!=='in_progress' || !this.remaining || (this.disconnectedAt && Date.now()-this.disconnectedAt>12000))await this.stop();
     }catch{this.message='Sem comunicação com o servidor.';if(!this.remaining)await this.stop();}
-    finally{this.polling=false;}
+    finally{this.polling=false;this.view.markForCheck();}
   }
   async stop(){
     if(this.stopped)return;
@@ -104,7 +105,7 @@ export class Candidate implements OnInit, OnDestroy {
         }
         this.message='Entrevista encerrada. Obrigado pela participação.';
       }
-    }catch(e){this.message=errorMessage(e);}finally{this.busy=false;this.chunks=[];this.stopped=false;}
+    }catch(e){this.message=errorMessage(e);}finally{this.busy=false;this.chunks=[];this.stopped=false;this.view.markForCheck();}
   }
   ngOnDestroy(){if(this.active)void this.stop();}
 }

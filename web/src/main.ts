@@ -1,5 +1,5 @@
 import 'zone.js';
-import {Component} from '@angular/core';
+import {Component,ChangeDetectorRef,inject} from '@angular/core';
 import {bootstrapApplication} from '@angular/platform-browser';
 import {CommonModule} from '@angular/common';
 import {FormsModule} from '@angular/forms';
@@ -13,13 +13,14 @@ function blank(){return {title:'',durationMinutes:30,recordingEnabled:false,budg
 interface Model {id:string;title:string;definition:ReturnType<typeof blank>}
 @Component({selector:'app-root',standalone:true,imports:[CommonModule,FormsModule,Candidate],templateUrl:'./admin.html'})
 class App{
+  private view=inject(ChangeDetectorRef);
   room=location.pathname.startsWith('/interview/');token='';logged=false;busy=false;message='';tab='Modelos';
   tabs=['Modelos','Convites','Histórico','Guardrails','Custos']; models:Model[]=[];guards:Guard[]=[];
   rows:any[]=[];model=blank();editId='';selected='';name='';context='';validity=168;link='';guardName='';instruction='';drag=-1;
   detail:any=null;detailId='';audioUrl='';spend:any=null;
   start=new Date(Date.now()-30*86400000).toISOString().slice(0,10); end=new Date().toISOString().slice(0,10);
   status:Record<string,string>={scheduled:'Agendada',in_progress:'Em andamento',connecting:'Conectando',completed:'Concluída',expired:'Expirada',interrupted:'Interrompida'};
-  async run(fn:()=>Promise<void>){if(this.busy)return;this.busy=true;this.message='';try{await fn();}catch(e){this.message=errorMessage(e);}finally{this.busy=false;}}
+  async run(fn:()=>Promise<void>){if(this.busy)return;this.busy=true;this.message='';try{await fn();}catch(e){this.message=errorMessage(e);}finally{this.busy=false;this.view.markForCheck();}}
   api(path:string,method='GET',body?:unknown){return request('/api/'+path,method,body,this.token);}
   async refresh(){[this.models,this.guards,this.rows]=await Promise.all([this.api('templates'),this.api('guardrails'),this.api('interviews')]);}
   login(){void this.run(async()=>{await this.refresh();this.logged=true;});}
