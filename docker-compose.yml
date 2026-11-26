@@ -6,20 +6,28 @@ services:
       POSTGRES_DB: interview
       POSTGRES_USER: interview
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
-    volumes:
-      - interview_data:/var/lib/postgresql/data
+    volumes: [interview_data:/var/lib/postgresql/data]
     networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interview -d interview"]
+      interval: 5s
+      retries: 10
   api:
     build: ./api
     restart: unless-stopped
     environment:
-      PORT: "3000"
       DATABASE_URL: postgresql://interview:${POSTGRES_PASSWORD}@db:5432/interview
-      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
-    depends_on: [db]
-    ports:
-      - "127.0.0.1:3000:3000"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks: [internal]
+  web:
+    build: ./web
+    restart: unless-stopped
+    depends_on: [api]
+    ports: ["127.0.0.1:8080:80"]
     networks: [internal]
 volumes:
   interview_data:
