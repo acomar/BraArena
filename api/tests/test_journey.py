@@ -90,20 +90,15 @@ class Journey(unittest.TestCase):
             self.assertEqual([t['content'] for t in report['turns']],[link['id']])
             self.assertEqual(report['cost']['components']['transcription']['usd'],'0.000015')
 
-    def test_concurrent_claims_and_timebox(self):
-        self.exercise_timebox('question')
-
-    def test_configured_closing_has_one_farewell(self):
-        self.exercise_timebox('closing')
-
-    def exercise_timebox(self, block_type):
+    def test_concurrent_claims_and_total_deadline(self):
+        from datetime import datetime, timedelta, timezone
         import asyncio,httpx,time
         from unittest.mock import AsyncMock
         from app import voice
         _,_,link=self.invite()
         with connection() as conn:
-            conn.execute("""UPDATE interviews SET definition=jsonb_set(jsonb_set(definition,'{blocks,0,timeboxSeconds}','2'),'{blocks,0,type}',to_jsonb(%s::text))
-                WHERE id=%s""",(block_type,link['id']))
+            conn.execute("""UPDATE interviews SET definition=jsonb_set(jsonb_set(definition,'{blocks,0,timeboxSeconds}','2'),'{blocks,0,type}',to_jsonb('question'::text))
+                WHERE id=%s""",(link['id'],))
         path='/api/candidate/'+link['id']
         payload={'token':link['token'],'transcriptConsent':True,'sdp':'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'}
         sent=[]
@@ -121,15 +116,17 @@ class Journey(unittest.TestCase):
             self.assertEqual(sorted(r.status_code for r in results),[200,409])
             key=next(r.json()['sessionToken'] for r in results if r.is_success)
             self.client.post(path+'/ready',json={'token':key}).raise_for_status()
+            time.sleep(2.4)
+            self.assertEqual(len(sent),1)
+            session=voice.live[UUID(link['id'])]
+            session['deadline']=datetime.now(timezone.utc)+timedelta(milliseconds=250)
             for _ in range(50):
                 r=self.client.get('/api/interviews/'+link['id']+'/report',headers=self.admin)
                 if r.is_success:
                     break
                 time.sleep(.1)
-            self.assertEqual(r.json()['report']['finishReason'],'stages_completed')
-            self.assertIn('response.create',sent[0])
-            if block_type == 'closing':
-                self.assertEqual(sum('response.create' in event for event in sent),1)
+            self.assertEqual(r.json()['report']['finishReason'],'timebox')
+            self.assertEqual(len(sent),1)
 
     def test_guardrail_revisions_and_review_flags(self):
         from app.voice import stage_prompt

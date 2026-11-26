@@ -11,7 +11,7 @@ class Block(BaseModel):
     prompt: Text
     expectedAnswer: str | None = Field(None, max_length=4000)
     drivers: list[Text] = Field(default_factory=list, max_length=30)
-    timeboxSeconds: int = Field(gt=0, le=10800)
+    timeboxSeconds: int | None = Field(None, gt=0, le=10800)
 
 
 class GuardRef(BaseModel):

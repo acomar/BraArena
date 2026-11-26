@@ -2,12 +2,12 @@
 import re
 
 STAGES = {'Apresentação': 'intro', 'Pergunta': 'question', 'Situação': 'situation', 'Encerramento': 'closing'}
-HEADER = re.compile(r'^Etapa \d+ · (Apresentação|Pergunta|Situação|Encerramento) \((\d{1,5}) s\)[ \t]*$', re.MULTILINE)
+HEADER = re.compile(r'^Etapa \d+ · (Apresentação|Pergunta|Situação|Encerramento)(?: \((\d{1,5}) s\))?[ \t]*$', re.MULTILINE)
 PRIVATE = re.compile(r'^[ \t]*Avaliação privada:[ \t]*', re.MULTILINE | re.IGNORECASE)
 
 
 def stage(text, kind, seconds):
-    if not 1 <= seconds <= 10800:
+    if seconds is not None and not 1 <= seconds <= 10800:
         raise ValueError('A duração de cada etapa deve estar entre 1 e 10.800 segundos.')
     parts = PRIVATE.split(text, maxsplit=1)
     prompt = parts[0].strip()
@@ -20,7 +20,8 @@ def stage(text, kind, seconds):
                 drivers.append(line.removeprefix('Critério: ').strip())
             else:
                 notes.append(line)
-    return dict(type=kind, prompt=prompt, timeboxSeconds=seconds,
+    timing = {} if seconds is None else {'timeboxSeconds': seconds}
+    return dict(type=kind, prompt=prompt, **timing,
                 drivers=drivers, expectedAnswer='\n'.join(notes).strip() or None)
 
 
@@ -37,7 +38,7 @@ def script_blocks(script, duration_minutes):
         text = script[header.end():end].strip()
         if index == 0 and preamble:
             text = preamble + '\n\n' + text
-        stages.append(stage(text, STAGES[header[1]], int(header[2])))
+        stages.append(stage(text, STAGES[header[1]], int(header[2]) if header[2] else None))
     return stages
 
 
@@ -45,7 +46,8 @@ def legacy_script(definition):
     names = {kind:name for name,kind in STAGES.items()}
     sections = []
     for index, block in enumerate(definition['blocks'], 1):
-        lines = [f"Etapa {index} · {names[block['type']]} ({block['timeboxSeconds']} s)", block['prompt']]
+        timing = f" ({block['timeboxSeconds']} s)" if block.get('timeboxSeconds') else ''
+        lines = [f"Etapa {index} · {names[block['type']]}{timing}", block['prompt']]
         if block.get('expectedAnswer') or block.get('drivers'):
             lines.append('Avaliação privada:')
             if block.get('expectedAnswer'):
