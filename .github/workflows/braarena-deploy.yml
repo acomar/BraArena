@@ -1,0 +1,64 @@
+name: BraArena manual deployment
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: braarena-production
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ai-interview-poc
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./api
+          push: true
+          tags: ghcr.io/acomar/braarena-api:${{ github.sha }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./web
+          push: true
+          tags: ghcr.io/acomar/braarena-web:${{ github.sha }}
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: braarena-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/ai-interview-poc
+      - name: Deploy via verified SSH
+        env:
+          SSH_KEY: ${{ secrets.BRAARENA_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.BRAARENA_KNOWN_HOSTS }}
+          HOST: ${{ secrets.BRAARENA_HOST }}
+          USER: ${{ secrets.BRAARENA_USER }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          : "${SSH_KEY:?Missing SSH key}"
+          : "${KNOWN_HOSTS:?Missing known hosts}"
+          : "${HOST:?Missing host}"
+          : "${USER:?Missing user}"
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          opts=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
+          ssh "${opts[@]}" "$USER@$HOST" 'mkdir -p /opt/braarena'
+          scp "${opts[@]}" deploy/compose.production.yml "$USER@$HOST:/opt/braarena/compose.production.yml"
+          scp "${opts[@]}" deploy/deploy-remote.sh "$USER@$HOST:/opt/braarena/deploy-remote.sh"
+          printf '%s\n' "$GH_TOKEN" | ssh "${opts[@]}" "$USER@$HOST" "cd /opt/braarena && sh deploy-remote.sh '$GITHUB_SHA' '$GITHUB_ACTOR'"
