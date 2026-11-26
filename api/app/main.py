@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from . import voice
 from .billing import card
 from .models import Access, Consent, Guard, Interview, Review, Template
-from .reports import analyze, assemble
+from .reports import analyze, assemble, transcript as read_transcript
 from .script import legacy_script, script_blocks
 from .store import connection, digest, migrate
 
@@ -224,7 +224,7 @@ def interviews():
 @app.get('/api/interviews/{ident}/transcript',dependencies=[Depends(admin)])
 def transcript(ident:UUID):
     with connection() as conn:
-        return conn.execute("SELECT speaker,content,source,event_id,created_at,block_index FROM transcript_turns WHERE interview_id=%s ORDER BY created_at,id",(ident,)).fetchall()
+        return read_transcript(conn,ident)
 
 @app.get('/api/interviews/{ident}/usage',dependencies=[Depends(admin)])
 def usage(ident:UUID):
@@ -246,6 +246,22 @@ def refresh_report(ident:UUID):
         if not conn.execute("SELECT 1 FROM interviews WHERE id=%s AND status='completed'",(ident,)).fetchone():
             raise HTTPException(409,'A entrevista deve estar encerrada.')
         return assemble(conn,ident)
+
+@app.post('/api/interviews/{ident}/evaluation',dependencies=[Depends(admin)],status_code=202)
+async def retry_evaluation(ident:UUID):
+    with connection() as conn:
+        row=conn.execute("""SELECT r.report FROM interview_reports r JOIN interviews i ON i.id=r.interview_id
+            WHERE i.id=%s AND i.status='completed' FOR UPDATE OF r""",(ident,)).fetchone()
+        if not row:
+            raise HTTPException(409,'A entrevista deve estar encerrada.')
+        report=row['report']
+        if report.get('analysisStatus')=='pending' or (report.get('evaluation') and
+                report.get('analysisStatus') in ('ready','insufficient_evidence')):
+            return {'analysisStatus':report['analysisStatus']}
+        conn.execute("""UPDATE interview_reports SET report=jsonb_set(report,'{analysisStatus}','"pending"')
+                        WHERE interview_id=%s""",(ident,))
+    voice.spawn(analyze(ident))
+    return {'analysisStatus':'pending'}
 
 @app.put('/api/interviews/{ident}/review',dependencies=[Depends(admin)])
 def review(ident:UUID,body:Review):

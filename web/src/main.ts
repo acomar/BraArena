@@ -69,6 +69,11 @@ class App{
   guard(){void this.run(async()=>{await this.api('guardrails','POST',{name:this.guardName,instruction:this.instruction});await this.refresh();this.message='Versão salva.';});}
   clearAudio(){if(this.audioUrl)URL.revokeObjectURL(this.audioUrl);this.audioUrl='';}
   open(id:string){void this.run(async()=>{this.clearAudio();this.detail=null;this.detail=await this.api('interviews/'+id+'/report');this.detailId=id;});}
+  reloadEvaluation(retry=false){void this.run(async()=>{
+    if(retry)await this.api('interviews/'+this.detailId+'/evaluation','POST');
+    const detail=await this.api('interviews/'+this.detailId+'/report');
+    this.detail.report=detail.report;
+  });}
   review(){void this.run(async()=>{await this.api('interviews/'+this.detailId+'/review','PUT',{note:this.detail.review||''});this.message='Revisão salva.';});}
   play(){void this.run(async()=>{const r=await fetch('/api/interviews/'+this.detailId+'/recording',{headers:{Authorization:'Bearer '+this.token}});if(!r.ok)throw new Error('Gravação indisponível.');this.clearAudio();this.audioUrl=URL.createObjectURL(await r.blob());});}
   erase(){if(!confirm('Excluir permanentemente esta gravação?'))return;void this.run(async()=>{await this.api('interviews/'+this.detailId+'/recording','DELETE');this.detail.recording=false;this.clearAudio();});}

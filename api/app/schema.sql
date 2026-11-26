@@ -46,3 +46,6 @@ CREATE TABLE IF NOT EXISTS recordings (
     expires_at timestamptz NOT NULL
 );
 ALTER TABLE transcript_turns ADD COLUMN IF NOT EXISTS provider_event_id text;
+
+ALTER TABLE transcript_turns ADD COLUMN IF NOT EXISTS start_ms integer;
+ALTER TABLE transcript_turns ADD COLUMN IF NOT EXISTS end_ms integer;

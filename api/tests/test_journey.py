@@ -23,7 +23,9 @@ class Journey(unittest.TestCase):
         body={'title':'Sessão técnica','durationMinutes':1,'recordingEnabled':True,
               'blocks':[{'type':'question','prompt':'Questão de teste','expectedAnswer':'private123','drivers':['driver123'],'timeboxSeconds':10}]}
         model=self.client.post('/api/templates',json=body,headers=self.admin).json()['id']
-        link=self.client.post('/api/interviews',json={'templateId':model,'candidateName':'Teste sintético'},headers=self.admin).json()
+        from app.billing import LEGACY_CARD
+        with patch('app.main.card',return_value=LEGACY_CARD):
+            link=self.client.post('/api/interviews',json={'templateId':model,'candidateName':'Teste sintético'},headers=self.admin).json()
         return model,body,link
 
     def test_invite_is_private_and_immutable(self):
@@ -164,8 +166,10 @@ class Journey(unittest.TestCase):
                'input_token_details':{'text_tokens':1,'audio_tokens':0,'cached_tokens':0},'output_token_details':{'text_tokens':0,'audio_tokens':1}}}})
         with connection() as conn:
             conn.execute("UPDATE interviews SET status='completed',started_at=now()-interval '1 minute',ended_at=now(),finish_reason='manual' WHERE id=%s",(ident,))
+        import json
+        assessment={'summary':'Resumo de teste.','opinion':'Parecer técnico.','criteria':[{'criterion':'1.1','score':3,'reason':'Descreveu a implementação.','evidence':['F1']}]}
         result={'id':'report_1','status':'completed','usage':{'input_tokens':10,'output_tokens':10,'input_tokens_details':{'cached_tokens':0}},
-                'output':[{'content':[{'type':'output_text','text':'O candidato descreveu sua implementação [candidate_1].'}]}]}
+                'output':[{'content':[{'type':'output_text','text':json.dumps(assessment)}]}]}
         reply=httpx.Response(200,request=httpx.Request('POST','https://example.invalid'),json=result)
         with patch.dict(os.environ,OPENAI_API_KEY='synthetic'),patch.object(httpx.AsyncClient,'post',new=AsyncMock(return_value=reply)):
             asyncio.run(analyze(ident))
@@ -175,7 +179,9 @@ class Journey(unittest.TestCase):
         self.assertEqual(fetched['review'],'Revisado pelo gestor')
         r=fetched['report']
         self.assertEqual(r['sections'][0]['candidateTurns'],['candidate_1'])
-        self.assertEqual(r['summary'],result['output'][0]['content'][0]['text'])
+        self.assertEqual(r['summary'],assessment['summary'])
+        self.assertEqual(r['evaluation']['criteria'][0]['score'],3)
+        self.assertEqual(r['evaluation']['opinion'],assessment['opinion'])
         self.assertEqual(r['cost']['status'],'consolidated')
         self.assertEqual(r['cost']['usd'],'0.000103')
         self.assertIsNone(r['cost']['billedUsd'])

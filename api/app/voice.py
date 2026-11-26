@@ -11,6 +11,7 @@ import httpx
 from fastapi import HTTPException
 from websockets.asyncio.client import connect
 
+from . import live_voice
 from .billing import card, cost
 from .conversation import Conversation, TURN_DETECTION, stage_prompt
 from .reports import analyze, assemble, save_usage
@@ -42,7 +43,8 @@ async def hangup(call):
         return True
     try:
         async with httpx.AsyncClient(timeout=8) as client:
-            r = await client.post('https://api.openai.com/v1/realtime/calls/'+call+'/hangup',headers=headers())
+            endpoint=(live_voice.URL+'/'+call[5:] if call.startswith('live:') else 'https://api.openai.com/v1/realtime/calls/'+call)
+            r = await client.post(endpoint+'/hangup',headers=headers())
             return r.is_success or r.status_code in (404,410)
     except (httpx.HTTPError,KeyError):
         return False
@@ -67,23 +69,33 @@ async def start(ident,body):
             consent_version='pt-BR-v1',recording_allowed=%s WHERE id=%s""",(digest(session),body.recordingConsent,ident))
     definition = row['definition']
     rates = definition.get('rates') or card()
-    config = {'type':'realtime','model':rates['voice']['model'],'instructions':stage_prompt(definition,0),
-              'audio':{'input':{'transcription':{'model':rates['transcription']['model'],'language':'pt'},
-                               'turn_detection':TURN_DETECTION},
-                       'output':{'voice':'marin'}}}
+    is_live = 'usdPerActiveMinute' in rates['voice']
     call = None
     try:
         async with httpx.AsyncClient(timeout=20) as client:
-            result = await client.post('https://api.openai.com/v1/realtime/calls',headers=headers(),files={
-                'sdp':(None,body.sdp),'session':(None,json.dumps(config),'application/json')})
-            result.raise_for_status()
-        call = urlsplit(result.headers['location']).path.rsplit('/',1)[-1]
-        if not re.fullmatch(r'[a-zA-Z0-9_-]{1,200}',call):
-            call = None
+            if is_live:
+                result=await client.post(live_voice.URL,headers=headers(),json={
+                    'session':live_voice.config(definition,rates),'transport':{'type':'webrtc','sdp':body.sdp}})
+                result.raise_for_status()
+                data=result.json()
+                provider_id=data['session']['id']
+                answer=data['transport']['sdp']
+            else:
+                config = {'type':'realtime','model':rates['voice']['model'],'instructions':stage_prompt(definition,0),
+                          'audio':{'input':{'transcription':{'model':rates['transcription']['model'],'language':'pt'},
+                                           'turn_detection':TURN_DETECTION},'output':{'voice':'marin'}}}
+                result=await client.post('https://api.openai.com/v1/realtime/calls',headers=headers(),files={
+                    'sdp':(None,body.sdp),'session':(None,json.dumps(config),'application/json')})
+                result.raise_for_status()
+                provider_id=urlsplit(result.headers['location']).path.rsplit('/',1)[-1]
+                answer=result.text
+        if not re.fullmatch(r'[a-zA-Z0-9_-]{1,200}',provider_id):
             raise ValueError('invalid call')
+        call='live:'+provider_id if is_live else provider_id
         with connection() as conn:
             conn.execute("UPDATE interviews SET call_id=%s WHERE id=%s",(call,ident))
-        socket = await connect('wss://api.openai.com/v1/realtime?call_id='+call,additional_headers=headers(),open_timeout=10)
+        endpoint=live_voice.SOCKET+provider_id+'/attach' if is_live else 'wss://api.openai.com/v1/realtime?call_id='+call
+        socket=await connect(endpoint,additional_headers=headers(),open_timeout=10)
     except Exception as exc:
         closed = await hangup(call)
         with connection() as conn:
@@ -94,8 +106,9 @@ async def start(ident,body):
             deadline=now()+%s*interval '1 minute' WHERE id=%s RETURNING deadline""",(definition['durationMinutes'],ident)).fetchone()['deadline']
     control = {'ready':False,'end':None,'state':'connecting','deadline':deadline,'last_seen':asyncio.get_running_loop().time()}
     live[ident]=control
+    definition['rates']=rates
     spawn(observe(ident,definition,call,socket,control))
-    return {'sdp':result.text,'sessionToken':session,'deadline':deadline}
+    return {'sdp':answer,'sessionToken':session,'deadline':deadline}
 
 def record(ident,index,event):
     kind = event.get('type','')
@@ -130,12 +143,16 @@ async def observe(ident,definition,call,socket,control):
     conversation = Conversation(definition)
     ready_by = loop.time()+20
     reason='observer_lost'
+    confirmed=False
     def persist_stage(previous):
         if conversation.index != previous:
             with connection() as conn:
                 conn.execute("UPDATE interviews SET block_index=%s WHERE id=%s",(conversation.index,ident))
 
     try:
+        if call.startswith('live:'):
+            reason,confirmed=await live_voice.observe(ident,definition,socket,control)
+            return
         while True:
             remaining=(control['deadline']-datetime.now(timezone.utc)).total_seconds()
             if conversation.started and loop.time()-control['last_seen']>25:
@@ -186,7 +203,7 @@ async def observe(ident,definition,call,socket,control):
         try:
             await socket.close()
         finally:
-            closed=await hangup(call)
+            closed=confirmed or await hangup(call)
             with connection() as conn:
                 conn.execute("UPDATE interviews SET status='completed',ended_at=now(),finish_reason=%s,call_id=%s WHERE id=%s",(reason,None if closed else call,ident))
                 assemble(conn,ident)

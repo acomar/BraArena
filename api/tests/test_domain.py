@@ -1,6 +1,6 @@
 import unittest
 from app.voice import validate_offer, stage_prompt
-from app.billing import cost
+from app.billing import cost, LEGACY_CARD
 from fastapi import HTTPException
 
 class Rules(unittest.TestCase):
@@ -22,6 +22,6 @@ class Rules(unittest.TestCase):
 
     def test_cached_tokens_and_components(self):
         events=[{'component':'voice','usage':{'input_tokens':100,'output_tokens':20,'input_token_details':{'text_tokens':80,'audio_tokens':20,'cached_tokens':10,'cached_tokens_details':{'text_tokens':6,'audio_tokens':4}},'output_token_details':{'text_tokens':10,'audio_tokens':10}}}]
-        result=cost(events,False)
+        result=cost(events,False,LEGACY_CARD)
         self.assertEqual(result['components']['voice']['usd'],'0.001612')
         self.assertNotEqual(result['status'],'billed')

@@ -11,7 +11,7 @@
 <section class="panel"><h2>{{editId?'Editar modelo':'Criar modelo'}}</h2><label>Instruções da entrevista<textarea rows="13" [(ngModel)]="model.script" aria-describedby="script-help script-count"
   (ngModelChange)="editorError=''" placeholder="Descreva a abertura, as perguntas, o que aprofundar e como encerrar."></textarea></label>
 <p id="script-count">{{scriptLength}} / 10.000 caracteres</p>
-<p id="script-help">Para incluir gabarito e critérios exclusivos do relatório, comece uma linha com <strong>Avaliação privada:</strong> e escreva-os abaixo.</p>
+<p id="script-help">Para incluir gabarito e critérios exclusivos do relatório, comece uma linha com <strong>Avaliação privada:</strong> e escreva-os abaixo. Para definir o que será avaliado, use uma linha iniciada por <strong>Critério:</strong> para cada critério.</p>
 <details><summary>Opções do modelo</summary>
 <label>Título (opcional)<input [(ngModel)]="model.title" maxlength="160" placeholder="Gerado automaticamente se ficar em branco"></label>
 <div class="grid"><label>Tempo total (min)<input type="number" min="1" max="180" [(ngModel)]="model.durationMinutes"></label>
@@ -30,6 +30,16 @@
 <ng-container *ngIf="tab==='Histórico'"><section class="panel"><h2>Entrevistas</h2><p *ngIf="!rows.length">Nenhum convite gerado.</p>
 <div class="listrow" *ngFor="let r of rows"><div><strong>{{r.candidate_name}}</strong><p>{{r.title}} · {{status[r.status] || r.status}}</p></div><div>{{r.cost?.usd ? 'USD '+r.cost.usd : ''}} <button *ngIf="r.status==='completed'" (click)="open(r.id)">Ver relatório</button></div></div></section>
 <section *ngIf="detail" class="panel"><h2>Relatório técnico</h2><p>{{detail.report.summary || 'Resumo de IA indisponível.'}}</p>
+<p *ngIf="detail.report.analysisStatus==='pending'" role="status">Preparando a avaliação. <button (click)="reloadEvaluation()">Atualizar relatório</button></p>
+<button *ngIf="detail.report.analysisStatus!=='pending' && (!detail.report.evaluation || detail.report.analysisStatus==='unavailable' || detail.report.analysisStatus==='incomplete')" [disabled]="busy" (click)="reloadEvaluation(true)">Gerar avaliação técnica</button>
+<section *ngIf="detail.report.evaluation as evaluation">
+<h3>Parecer técnico para revisão</h3>
+<p *ngIf="detail.report.analysisStatus==='unavailable' || detail.report.analysisStatus==='incomplete'; else opinion">A análise por IA não foi concluída. A transcrição está disponível para revisão.</p>
+<ng-template #opinion><p>{{evaluation.opinion}}</p></ng-template>
+<div *ngFor="let c of evaluation.criteria" class="block"><strong>Etapa {{c.stage+1}} · {{c.name}}</strong>
+<p><b>{{c.score == null ? 'Sem nota' : c.score+' / '+evaluation.scaleMax}}</b> · {{c.reason}}</p>
+<blockquote *ngFor="let e of c.evidence">“{{e.quote}}”</blockquote></div>
+</section>
 <p *ngIf="detail.report.transcriptIncomplete">Transcrição incompleta.</p><p *ngFor="let n of detail.report.notices">{{n}}</p>
 <div *ngFor="let s of detail.report.sections" class="block"><strong>{{s.prompt}}</strong><p>{{s.answered?'Resposta registrada':'Sem resposta registrada'}} · {{s.drivers.join(', ')}}</p>
 <ng-container *ngFor="let t of detail.report.turns"><p *ngIf="s.candidateTurns.includes(t.event_id)">{{t.content}}</p></ng-container></div>
