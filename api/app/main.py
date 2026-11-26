@@ -153,6 +153,8 @@ async def ready(ident:UUID,body:Access):
 @app.post('/api/candidate/{ident}/status')
 async def status(ident:UUID,body:Access):
     row=session_row(ident,body.token)
+    if ident in voice.live:
+        voice.live[ident]['last_seen']=asyncio.get_running_loop().time()
     return {'status':row['status'],'state':voice.live.get(ident,{}).get('state','idle'),'deadline':row['deadline']}
 
 @app.post('/api/candidate/{ident}/finish')

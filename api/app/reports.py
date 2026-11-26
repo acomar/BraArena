@@ -30,6 +30,7 @@ def assemble(conn, ident):
     if fx and bill['usd'] is not None:
         bill['indicativeBrl'] = str(round(Decimal(bill['usd'])*Decimal(fx),2))
         bill['usdBrlRate'] = fx
+        bill['usdBrlDate'] = os.getenv('USD_BRL_DATE')
     report = {'summary':old.get('summary'),'analysisStatus':old.get('analysisStatus','pending'),
               'sections':groups,'transcriptIncomplete':incomplete,'turns':turns,'notices':row['notices'],
               'finishReason':row['finish_reason'],'voiceCost':bill['components']['voice'],

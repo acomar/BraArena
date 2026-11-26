@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 # USD per million tokens, by modality. Each report stores the applied card.
 CARD = {
     "version":"2026-11-25", "voice":{"model":"gpt-realtime","text":4,"audio":32,"cached_text":0.4,"cached_audio":0.4,"out_text":16,"out_audio":64},
-    "transcription":{"model":"gpt-4o-mini-transcribe","text":1.25,"audio":3,"out_text":5},
+    "transcription":{"model":"gpt-4o-mini-transcribe","text":1.25,"audio":1.25,"out_text":5},
     "analysis":{"model":"gpt-4.1-mini","text":0.4,"cached_text":0.1,"out_text":1.6},
 }
 

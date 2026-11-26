@@ -80,7 +80,7 @@ async def start(ident,body):
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             result = await client.post('https://api.openai.com/v1/realtime/calls',headers=headers(),files={
-                'sdp':(None,body.sdp),'session':(None,json.dumps(config))})
+                'sdp':(None,body.sdp),'session':(None,json.dumps(config),'application/json')})
             result.raise_for_status()
         call = urlsplit(result.headers['location']).path.rsplit('/',1)[-1]
         if not re.fullmatch(r'[a-zA-Z0-9_-]{1,200}',call):
@@ -97,7 +97,7 @@ async def start(ident,body):
     with connection() as conn:
         deadline=conn.execute("""UPDATE interviews SET status='in_progress',started_at=now(),
             deadline=now()+%s*interval '1 minute' WHERE id=%s RETURNING deadline""",(definition['durationMinutes'],ident)).fetchone()['deadline']
-    control = {'ready':False,'end':None,'state':'connecting','deadline':deadline}
+    control = {'ready':False,'end':None,'state':'connecting','deadline':deadline,'last_seen':asyncio.get_running_loop().time()}
     live[ident]=control
     spawn(observe(ident,definition,call,socket,control))
     return {'sdp':result.text,'sessionToken':session,'deadline':deadline}
@@ -133,12 +133,15 @@ async def observe(ident,definition,call,socket,control):
     stage_end=loop.time()+20
     begun=False
     asking=False
+    farewell=False
     reason='observer_lost'
     async def send(kind,**data):
         await socket.send(json.dumps({'type':kind,**data}))
     try:
         while True:
             remaining=(control['deadline']-datetime.now(timezone.utc)).total_seconds()
+            if begun and loop.time()-control['last_seen']>25:
+                control['end']='connection_timeout'
             if control['end'] or remaining<=0:
                 reason=control['end'] or 'timebox'
                 break
@@ -146,6 +149,11 @@ async def observe(ident,definition,call,socket,control):
                 begun=True
                 await send('response.create')
                 stage_end=loop.time()+definition['blocks'][0]['timeboxSeconds']
+            last_stage = index==len(definition['blocks'])-1
+            until_finish = min(remaining,stage_end-loop.time()) if last_stage else remaining
+            if begun and not farewell and until_finish<=6 and not asking:
+                farewell=True
+                await send('response.create',response={'instructions':'Agradeça brevemente e encerre a entrevista agora, sem avaliar o candidato.'})
             if loop.time()>=stage_end:
                 if not begun:
                     reason='connection_timeout'

@@ -88,4 +88,37 @@ class Journey(unittest.TestCase):
             with connection() as conn:
                 report=assemble(conn,ident)
             self.assertEqual([t['content'] for t in report['turns']],[link['id']])
-            self.assertEqual(report['cost']['components']['transcription']['usd'],'0.000022')
+            self.assertEqual(report['cost']['components']['transcription']['usd'],'0.000015')
+
+    def test_concurrent_claims_and_timebox(self):
+        import asyncio,httpx,time
+        from unittest.mock import AsyncMock
+        from app import voice
+        _,_,link=self.invite()
+        with connection() as conn:
+            conn.execute("""UPDATE interviews SET definition=jsonb_set(definition,'{blocks,0,timeboxSeconds}','2')
+                WHERE id=%s""",(link['id'],))
+        path='/api/candidate/'+link['id']
+        payload={'token':link['token'],'transcriptConsent':True,'sdp':'v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n'}
+        sent=[]
+        class Socket:
+            async def recv(self):
+                await asyncio.sleep(30)
+            async def send(self,data):
+                sent.append(data)
+            async def close(self):
+                pass
+        reply=httpx.Response(201,request=httpx.Request('POST','https://example.invalid'),headers={'location':'/v1/realtime/calls/test'})
+        with patch.dict(os.environ,OPENAI_API_KEY='test'),patch.object(httpx.AsyncClient,'post',AsyncMock(return_value=reply)),patch.object(voice,'connect',AsyncMock(return_value=Socket())),patch.object(voice,'hangup',AsyncMock(return_value=True)):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                results=list(pool.map(lambda _:self.client.post(path+'/session',json=payload),range(2)))
+            self.assertEqual(sorted(r.status_code for r in results),[200,409])
+            key=next(r.json()['sessionToken'] for r in results if r.is_success)
+            self.client.post(path+'/ready',json={'token':key}).raise_for_status()
+            for _ in range(50):
+                r=self.client.get('/api/interviews/'+link['id']+'/report',headers=self.admin)
+                if r.is_success:
+                    break
+                time.sleep(.1)
+            self.assertEqual(r.json()['report']['finishReason'],'stages_completed')
+            self.assertIn('response.create',sent[0])
