@@ -76,10 +76,26 @@ interface TemplateItem { id: string; title: string; }
       <p *ngIf="candidateLink"><a [href]="candidateLink">{{candidateLink}}</a></p>
       <p>O link é uma credencial de acesso. Compartilhe apenas com o candidato.</p>
     </section>
-    <section><h2>Entrevista por voz</h2><p>A sala do candidato e a integração OpenAI Realtime ainda não estão disponíveis. Os links gerados não devem ser enviados para entrevistas reais.</p></section>
+    <section *ngIf="candidateMode">
+      <h2>Sala de entrevista</h2>
+      <p>A conversa será processada por IA para avaliação técnica.</p>
+      <label><input type="checkbox" [(ngModel)]="transcriptConsent"> Aceito a transcrição e avaliação por IA.</label>
+      <p>A gravação permanente de áudio ainda não está disponível.</p>
+      <button (click)="startVoice()" [disabled]="!transcriptConsent || voiceActive">Iniciar entrevista</button>
+      <button (click)="stopVoice()" [disabled]="!voiceActive">Encerrar</button>
+      <p role="status">{{voiceMessage}}</p><audio autoplay></audio>
+    </section>
+    <section *ngIf="!candidateMode"><h2>Entrevista por voz</h2><p>Abra um link individual para acessar a sala.</p></section>
   </main>`
 })
 class App {
+  candidateMode = window.location.pathname.startsWith('/interview/');
+  transcriptConsent = false;
+  voiceActive = false;
+  voiceMessage = '';
+  private peer: RTCPeerConnection | null = null;
+  private microphone: MediaStream | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   token = '';
   title = '';
   durationMinutes = 30;
@@ -93,6 +109,58 @@ class App {
   linkMessage = '';
 
   constructor(private http: HttpClient) {}
+
+  async startVoice() {
+    if (!this.transcriptConsent || this.voiceActive) return;
+    const id = window.location.pathname.split('/')[2];
+    const token = new URLSearchParams(window.location.search).get('token');
+    if (!id || !token) { this.voiceMessage = 'Link inválido.'; return; }
+    try {
+      this.voiceMessage = 'Conectando...';
+      const response = await fetch('/api/candidate/' + encodeURIComponent(id) + '/session', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({token,transcriptConsent:true,recordingConsent:false})
+      });
+      if (!response.ok) throw new Error('Não foi possível iniciar a sessão.');
+      const session = await response.json();
+      this.microphone = await navigator.mediaDevices.getUserMedia({audio:true});
+      this.peer = new RTCPeerConnection();
+      for (const track of this.microphone.getTracks()) this.peer.addTrack(track, this.microphone);
+      this.peer.ontrack = event => {
+        const player = document.querySelector('audio') as HTMLAudioElement | null;
+        if (player) { player.srcObject = event.streams[0]; void player.play(); }
+      };
+      const channel = this.peer.createDataChannel('oai-events');
+      channel.onopen = () => this.voiceMessage = 'Entrevista em andamento.';
+      channel.onmessage = event => {
+        try { if (JSON.parse(event.data).type === 'error') this.voiceMessage = 'Erro na conversa.'; }
+        catch { /* Ignore invalid event. */ }
+      };
+      const offer = await this.peer.createOffer();
+      await this.peer.setLocalDescription(offer);
+      const answer = await fetch('https://api.openai.com/v1/realtime/calls', {
+        method:'POST',
+        headers:{Authorization:'Bearer ' + session.clientSecret,'Content-Type':'application/sdp'},
+        body:offer.sdp
+      });
+      if (!answer.ok) throw new Error('Falha na conexão de áudio.');
+      await this.peer.setRemoteDescription({type:'answer',sdp:await answer.text()});
+      this.voiceActive = true;
+      this.timer = setTimeout(() => this.stopVoice(), Math.max(1, Number(session.durationMinutes))*60000);
+    } catch (error) {
+      this.stopVoice();
+      this.voiceMessage = error instanceof Error ? error.message : 'Falha na conexão.';
+    }
+  }
+  stopVoice() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.peer?.close(); this.peer = null;
+    this.microphone?.getTracks().forEach(track => track.stop()); this.microphone = null;
+    this.voiceActive = false;
+    this.voiceMessage = 'Sessão encerrada. Relatório e transcrição ainda não são persistidos.';
+  }
+
 
   newBlock(type: BlockType): EditorBlock {
     return {type, prompt:'', expectedAnswer:'', driversText:'', timeboxSeconds:300};
