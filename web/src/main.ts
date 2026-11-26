@@ -18,6 +18,9 @@ interface TemplateItem { id: string; title: string; }
   selector: 'app-root',
   standalone: true,
   imports: [CommonModule, FormsModule],
+  styles: [`
+.robot-stage{display:grid;place-items:center;gap:16px;padding:32px 12px;color:#17324d}.robot{width:clamp(150px,45vw,230px);aspect-ratio:1;border-radius:50%;position:relative;background:radial-gradient(circle at 30% 22%,#bceaff,#358bd9 42%,#163b80 85%);box-shadow:0 12px 36px #174b8640,inset 0 0 18px #ffffff55;display:grid;place-items:center;transition:box-shadow .2s}.robot[data-state=listening]{box-shadow:0 0 0 9px #36b9a32b,0 12px 36px #174b8640}.robot[data-state=speaking]{box-shadow:0 0 0 9px #358bd92b,0 12px 36px #174b8640}.face{width:72%;height:48%;border-radius:40%;background:#102747;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16%;box-shadow:inset 0 0 12px #0008}.eyes{display:flex;gap:24px}.eye{width:18px;height:24px;border-radius:50%;background:#bdfaff;box-shadow:0 0 10px #74edff;animation:blink 5s infinite}.mouth{width:32px;min-height:5px;border-radius:20px;background:#bdfaff;transition:height .08s linear}.robot[data-state=thinking] .eye{animation:blink 1.5s infinite}@keyframes blink{0%,45%,49%,100%{transform:scaleY(1)}47%{transform:scaleY(.1)}}@media(prefers-reduced-motion:reduce){.eye{animation:none!important}.mouth,.robot{transition:none}}
+  `],
   template: `<main>
     <h1>BraArena</h1><p>POC de entrevistas técnicas com IA</p>
     <section *ngIf="!candidateMode">
@@ -78,10 +81,11 @@ interface TemplateItem { id: string; title: string; }
     </section>
     <section *ngIf="candidateMode">
       <h2>Sala de entrevista</h2>
+      <div class="robot-stage"><div class="robot" [attr.data-state]="robotState" aria-hidden="true"><div class="face"><div class="eyes"><span class="eye"></span><span class="eye"></span></div><div class="mouth" [style.height.px]="mouthHeight"></div></div></div><span role="status">{{robotLabel}}</span></div>
       <p>A conversa será processada por IA para avaliação técnica.</p>
       <label><input type="checkbox" [(ngModel)]="transcriptConsent"> Aceito a transcrição e avaliação por IA.</label>
       <p>A gravação permanente de áudio ainda não está disponível.</p>
-      <button (click)="startVoice()" [disabled]="!transcriptConsent || voiceActive">Iniciar entrevista</button>
+      <button (click)="startVoice()" [disabled]="!transcriptConsent || voiceActive || connecting">Iniciar entrevista</button>
       <button (click)="stopVoice()" [disabled]="!voiceActive">Encerrar</button>
       <p role="status">{{voiceMessage}}</p><audio autoplay></audio>
     </section>
@@ -92,6 +96,26 @@ class App {
   candidateMode = window.location.pathname.startsWith('/interview/');
   transcriptConsent = false;
   voiceActive = false;
+  connecting = false;
+  robotState = 'idle';
+  mouthHeight = 5;
+  private audioContext: AudioContext | null = null;
+  private animationFrame = 0;
+  get robotLabel() { return ({idle:'Aguardando início',connecting:'Conectando',listening:'Ouvindo você',thinking:'Preparando resposta',speaking:'Entrevistadora falando'} as Record<string,string>)[this.robotState] || 'Aguardando'; }
+  private animateVoice(stream: MediaStream) {
+    if (!this.audioContext) return;
+    const analyser = this.audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    this.audioContext.createMediaStreamSource(stream).connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getFloatTimeDomainData(samples);
+      const rms = Math.sqrt(samples.reduce((sum,x)=>sum+x*x,0)/samples.length);
+      this.mouthHeight = this.robotState === 'speaking' ? Math.min(32,5+rms*170) : 5;
+      this.animationFrame = requestAnimationFrame(tick);
+    };
+    cancelAnimationFrame(this.animationFrame); tick();
+  }
   voiceMessage = '';
   private peer: RTCPeerConnection | null = null;
   private microphone: MediaStream | null = null;
@@ -111,11 +135,15 @@ class App {
   constructor(private http: HttpClient) {}
 
   async startVoice() {
-    if (!this.transcriptConsent || this.voiceActive) return;
+    if (!this.transcriptConsent || this.voiceActive || this.connecting) return;
     const id = window.location.pathname.split('/')[2];
     const token = new URLSearchParams(window.location.search).get('token');
     if (!id || !token) { this.voiceMessage = 'Link inválido.'; return; }
     try {
+      this.connecting = true;
+      this.robotState = 'connecting';
+      this.audioContext = new AudioContext();
+      await this.audioContext.resume();
       this.voiceMessage = 'Conectando...';
       const response = await fetch('/api/candidate/' + encodeURIComponent(id) + '/session', {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -128,15 +156,24 @@ class App {
       for (const track of this.microphone.getTracks()) this.peer.addTrack(track, this.microphone);
       this.peer.ontrack = event => {
         const player = document.querySelector('audio') as HTMLAudioElement | null;
-        if (player) { player.srcObject = event.streams[0]; void player.play(); }
+        if (player) { player.srcObject = event.streams[0]; void player.play().catch(()=>{this.voiceMessage='Não foi possível reproduzir o áudio.';}); }
+        this.animateVoice(event.streams[0]);
       };
       const channel = this.peer.createDataChannel('oai-events');
       channel.onopen = () => {
         this.voiceMessage = 'Entrevista em andamento.';
+        this.robotState = 'thinking';
         channel.send(JSON.stringify({type:'response.create'}));
       };
       channel.onmessage = event => {
-        try { if (JSON.parse(event.data).type === 'error') this.voiceMessage = 'Erro na conversa.'; }
+        try {
+          const type = JSON.parse(event.data).type;
+          if (type === 'error') this.voiceMessage = 'Erro na conversa.';
+          if (type === 'input_audio_buffer.speech_started') this.robotState = 'listening';
+          if (type === 'input_audio_buffer.speech_stopped' || type === 'response.created') this.robotState = 'thinking';
+          if (type === 'output_audio_buffer.started') this.robotState = 'speaking';
+          if (type === 'output_audio_buffer.stopped' || type === 'output_audio_buffer.cleared') this.robotState = 'listening';
+        }
         catch { /* Ignore invalid event. */ }
       };
       const offer = await this.peer.createOffer();
@@ -149,6 +186,7 @@ class App {
       if (!answer.ok) throw new Error('Falha na conexão de áudio.');
       await this.peer.setRemoteDescription({type:'answer',sdp:await answer.text()});
       this.voiceActive = true;
+      this.connecting = false;
       this.timer = setTimeout(() => this.stopVoice(), Math.max(1, Number(session.durationMinutes))*60000);
     } catch (error) {
       this.stopVoice();
@@ -161,6 +199,11 @@ class App {
     this.peer?.close(); this.peer = null;
     this.microphone?.getTracks().forEach(track => track.stop()); this.microphone = null;
     this.voiceActive = false;
+    this.connecting = false;
+    cancelAnimationFrame(this.animationFrame);
+    if (this.audioContext) void this.audioContext.close();
+    this.audioContext = null;
+    this.robotState = 'idle'; this.mouthHeight = 5;
     this.voiceMessage = 'Sessão encerrada. Relatório e transcrição ainda não são persistidos.';
   }
 
