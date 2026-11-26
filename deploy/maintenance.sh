@@ -3,9 +3,9 @@ set -eu
 cd /opt/braarena
 exec 9>.deploy.lock
 flock -n 9 || exit 0
-set -a
-. ./.env
-set +a
+TLS_CERT=$(sed -n 's/^TLS_CERT=//p' .env)
+BRAARENA_IP=$(sed -n 's/^BRAARENA_IP=//p' .env)
+BRAARENA_PORT=$(sed -n 's/^BRAARENA_PORT=//p' .env)
 export RELEASE_SHA="$(cat .release-sha)"
 expected=$(openssl x509 -in "$TLS_CERT" -noout -fingerprint -sha256)
 actual=$(openssl s_client -connect "$BRAARENA_IP:${BRAARENA_PORT:-8443}" </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256)

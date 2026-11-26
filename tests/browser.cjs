@@ -34,7 +34,53 @@ const {chromium} = require('playwright-core');
       await page.getByRole('status').filter({hasText:/Microfone recebeu áudio|Microfone conectado/}).waitFor();
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
     }
+    // A second real WebRTC peer supplies deterministic audio in place of a paid OpenAI call.
+    let ready=false, uploaded=null, end=false, consent=false;
+    await page.route('**/api/candidate/*/*',async route=>{
+      const r=route.request(), action=new URL(r.url()).pathname.split('/').pop();
+      const answer=json=>route.fulfill({json});
+      if(action==='info')return answer({title:'Sala de áudio sintético',recording:true,minutes:1,voiceConfigured:true});
+      if(action==='session'){
+        consent=r.postDataJSON().recordingConsent;
+        const sdp=await page.evaluate(async offer=>{
+          const pc=new RTCPeerConnection();window.testPeer=pc;
+          const audio=new AudioContext();await audio.resume();window.testAudio=audio;
+          const osc=audio.createOscillator(),out=audio.createMediaStreamDestination();
+          osc.connect(out);osc.start();
+          await pc.setRemoteDescription({type:'offer',sdp:offer});
+          pc.addTrack(out.stream.getAudioTracks()[0],out.stream);
+          await pc.setLocalDescription(await pc.createAnswer());
+          if(pc.iceGatheringState!=='complete')await new Promise(resolve=>{
+            pc.onicegatheringstatechange=()=>{if(pc.iceGatheringState==='complete')resolve();};
+          });
+          return pc.localDescription.sdp;
+        },r.postDataJSON().sdp);
+        return answer({sdp,sessionToken:'synthetic-session-for-e2e',deadline:new Date(Date.now()+60000).toISOString()});
+      }
+      if(action==='ready'){ready=true;return answer({ok:true});}
+      if(action==='status')return answer({status:'in_progress',state:'speaking'});
+      if(action==='finish'){end=true;return answer({ok:true});}
+      if(action==='recording'){uploaded=r.postDataBuffer();return answer({ok:true});}
+      throw Error('Unexpected candidate operation');
+    });
+    for(const allow of [false,true]){
+      ready=false;uploaded=null;end=false;
+      await page.goto('about:blank');await page.goto(url);await page.getByText('Sala de áudio sintético',{exact:true}).waitFor();
+      await page.getByRole('checkbox',{name:/Aceito a transcrição/}).check();
+      if(allow)await page.getByRole('checkbox',{name:/Autorizo também/}).check();
+      await page.getByRole('button',{name:'Iniciar entrevista'}).click();
+      await page.getByText('Entrevistadora falando',{exact:true}).waitFor();
+      await page.waitForFunction(()=>parseFloat(document.querySelector('.mouth').style.height)>6);
+      assert.equal(ready,true);assert.equal(consent,allow);
+      await page.getByRole('button',{name:'Encerrar entrevista'}).click();
+      await page.getByRole('status').filter({hasText:'Obrigado pela participação'}).waitFor();
+      assert.equal(end,true);
+      if(allow){
+        assert.ok(uploaded.length>100);assert.equal(uploaded.subarray(0,4).toString('hex'),'1a45dfa3');
+        assert.ok(uploaded.includes(Buffer.from('A_OPUS')));
+      }else assert.equal(uploaded,null);
+    }
     assert.deepEqual(errors,[]);
-    console.log('PASS Angular login, template, duplicate, invitation, consent, microphone and output test, desktop and mobile widths');
+    console.log('PASS Angular login, template, duplicate, invitation, consent, microphone and output test, desktop and mobile widths, real WebRTC loopback and optional WebM/Opus');
   } finally { await browser.close(); }
 })().catch(err=>{console.error(err.message);process.exitCode=1;});

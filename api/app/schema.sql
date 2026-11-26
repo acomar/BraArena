@@ -45,3 +45,4 @@ CREATE TABLE IF NOT EXISTS recordings (
     interview_id uuid PRIMARY KEY REFERENCES interviews(id), audio bytea NOT NULL,
     expires_at timestamptz NOT NULL
 );
+ALTER TABLE transcript_turns ADD COLUMN IF NOT EXISTS provider_event_id text;

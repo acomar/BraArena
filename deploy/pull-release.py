@@ -28,8 +28,14 @@ def main():
             raise ValueError('invalid ref')
         if Path('.release-sha').read_text().strip()==sha or Path('.hold-release').exists():
             return
-        runs=api('/actions/workflows/braarena-deploy.yml/runs?branch=feat%2Fai-interview-poc&head_sha='+sha+'&per_page=5')['workflow_runs']
-        if not any(r['head_sha']==sha and r['conclusion']=='success' and r['event'] in ('push','workflow_dispatch') and r['head_repository']['id']==1421282200 for r in runs):
+        runs=api('/actions/runs?branch=feat%2Fai-interview-poc&head_sha='+sha+'&per_page=5')['workflow_runs']
+        matched = [r for r in runs if r['path']=='.github/workflows/braarena-deploy.yml' and
+                   r['head_sha']==sha and r['event'] in ('push','workflow_dispatch') and
+                   r['head_repository']['id']==1421282200 and r['status'] in ('completed','in_progress')]
+        def published(run):
+            jobs=api('/actions/runs/'+str(int(run['id']))+'/jobs')['jobs']
+            return all(any(j['name']==name and j['conclusion']=='success' for j in jobs) for name in ('verify','publish'))
+        if not any(published(r) for r in matched):
             return
         release=api('/releases/tags/poc-'+sha)
         asset=next(a for a in release['assets'] if a['name']=='braarena-images.tar.gz')

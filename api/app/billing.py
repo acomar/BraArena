@@ -51,18 +51,21 @@ def cost(events, complete, rates=None):
         valid = True
         for event in selected:
             try:
-                for key, count in amounts(kind,event['usage']).items():
+                event_cost = Decimal(0)
+                usage_counts = amounts(kind,event['usage'])
+                for key, count in usage_counts.items():
                     rate = Decimal(str(rates[kind][key]))
                     if not rate.is_finite() or rate < 0:
                         raise ValueError("invalid rate")
-                    subtotal += count * rate / 1000000
+                    event_cost += count * rate / 1000000
+                subtotal += event_cost
+                for key,count in usage_counts.items():
                     tokens[key] = tokens.get(key,0) + count
             except (KeyError, TypeError, ValueError, InvalidOperation):
                 valid = False
-        if valid:
-            total += subtotal
-        components[kind] = {'usd':format(subtotal,'.6f') if valid and selected else None,'tokens':tokens,'events':len(selected)}
-    known = any(c['usd'] is not None for c in components.values())
+        total += subtotal
+        components[kind] = {'usd':format(subtotal,'.6f') if valid and selected else None,'tokens':tokens,'events':len(selected),'knownUsd':format(subtotal,'.6f') if selected else None}
+    known = total>0 or any(c['usd'] is not None for c in components.values())
     complete = complete and all(c['usd'] is not None for c in components.values())
     fx = os.environ.get('BRL_PER_USD')
     return {'status':'consolidated_usage' if complete else 'incomplete_estimate',

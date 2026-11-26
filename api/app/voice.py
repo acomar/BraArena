@@ -122,6 +122,9 @@ def record(ident,index,event):
         conn.execute("""INSERT INTO transcript_turns(interview_id,event_id,speaker,content,source,block_index)
             VALUES(%s,%s,%s,%s,'openai',%s) ON CONFLICT(interview_id,event_id) DO UPDATE
             SET content=CASE WHEN excluded.content<>'' THEN excluded.content ELSE transcript_turns.content END""",(ident,item,speaker,text,index))
+        if event.get('event_id'):
+            conn.execute("UPDATE transcript_turns SET provider_event_id=%s WHERE interview_id=%s AND event_id=%s",
+                         (event['event_id'],ident,item))
         if kind=='conversation.item.input_audio_transcription.completed':
             save_usage(conn,ident,'transcribe:'+item,'transcription',event.get('usage'))
             if re.search(r'ignore.{0,24}(instruções|regras)|revele.{0,24}(gabarito|instruções)|mude.{0,20}(nota|tempo)',text,re.I):

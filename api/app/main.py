@@ -64,7 +64,7 @@ def admin(authorization:str=Header(default='')):
 def health():
     with connection() as conn:
         conn.execute('SELECT 1')
-    return {'ok':True,'voiceConfigured':bool(os.getenv('OPENAI_API_KEY'))}
+    return {'ok':True,'voiceConfigured':bool(os.getenv('OPENAI_API_KEY')),'release':os.getenv('BRAARENA_RELEASE')}
 
 @app.get('/api/guardrails',dependencies=[Depends(admin)])
 def guards():

@@ -21,6 +21,7 @@ services:
     mem_limit: 320m
     environment:
       DATABASE_URL: postgresql://interview:${POSTGRES_PASSWORD}@db/interview
+      BRAARENA_RELEASE: ${RELEASE_SHA:?}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       USD_BRL: ${USD_BRL:-}
@@ -43,15 +44,6 @@ services:
       NGINX_ENTRYPOINT_WORKER_PROCESSES_AUTOTUNE: "1"
     depends_on:
       api: {condition: service_healthy}
-    volumes:
-      - ./listen-tls.conf:/etc/nginx/braarena-listeners/tls.conf:ro
-      - ${TLS_CERT:?}:/run/braarena/fullchain.pem:ro
-      - ${TLS_KEY:?}:/run/braarena/privkey.pem:ro
-    healthcheck:
-      test: ["CMD","wget","-qO","/dev/null","http://127.0.0.1/health"]
-      interval: 10s
-      timeout: 4s
-      retries: 6
     ports: ["${BRAARENA_IP:?}:${BRAARENA_PORT:-8443}:8443"]
     volumes:
       - ./listen-tls.conf:/etc/nginx/braarena-listeners/tls.conf:ro

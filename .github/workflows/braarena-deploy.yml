@@ -15,6 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Backend and PostgreSQL
         run: |
+          RELEASE_SHA="$GITHUB_SHA" POSTGRES_PASSWORD=test ADMIN_TOKEN=compose-validation BRAARENA_IP=127.0.0.1 TLS_CERT=/unused/fullchain TLS_KEY=/unused/key docker compose -f deploy/compose.production.yml config --quiet
           docker build -t braarena-api:development api
           docker compose -f compose.test.yml up --abort-on-container-exit --exit-code-from test
       - name: Angular and Playwright
@@ -55,3 +56,22 @@ jobs:
           gh release view "poc-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "poc-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "POC ${GITHUB_SHA:0:8}" --notes "Imagens verificadas pelo CI."
           gh release upload "poc-$GITHUB_SHA" braarena-images.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+  smoke:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Verify the deployed SHA over public HTTPS
+        env:
+          PUBLIC_URL: ${{ vars.BRAARENA_PUBLIC_URL || 'https://191.252.92.181:8443' }}
+        run: |
+          set -eu
+          for attempt in $(seq 1 75); do
+            if curl -fsS --max-time 8 "$PUBLIC_URL/health" | jq -e --arg sha "$GITHUB_SHA" '.ok and .release==$sha'; then
+              curl -fsS "$PUBLIC_URL/" | grep -q 'app-root'
+              test "$(curl -sS -o /dev/null -w '%{http_code}' "$PUBLIC_URL/api/templates")" = 401
+              exit 0
+            fi
+            sleep 12
+          done
+          exit 1

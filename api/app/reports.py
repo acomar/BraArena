@@ -13,7 +13,7 @@ def save_usage(conn, ident, event_id, component, usage):
 
 def assemble(conn, ident):
     row = conn.execute("SELECT * FROM interviews WHERE id=%s FOR UPDATE",(ident,)).fetchone()
-    turns = conn.execute("""SELECT speaker,content,event_id,created_at,block_index,source FROM transcript_turns
+    turns = conn.execute("""SELECT speaker,content,event_id,provider_event_id,created_at,block_index,source FROM transcript_turns
         WHERE interview_id=%s ORDER BY created_at,id""",(ident,)).fetchall()
     events = conn.execute("SELECT component,usage FROM realtime_usage WHERE interview_id=%s AND source='openai'",(ident,)).fetchall()
     existing = conn.execute("SELECT report FROM interview_reports WHERE interview_id=%s",(ident,)).fetchone()
