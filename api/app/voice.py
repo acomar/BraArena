@@ -154,7 +154,8 @@ async def observe(ident,definition,call,socket,control):
                 stage_end=loop.time()+definition['blocks'][0]['timeboxSeconds']
             last_stage = index==len(definition['blocks'])-1
             until_finish = min(remaining,stage_end-loop.time()) if last_stage else remaining
-            if begun and not farewell and until_finish<=6 and not asking:
+            closing_stage = definition['blocks'][index]['type'] == 'closing'
+            if begun and not closing_stage and not farewell and until_finish<=6 and not asking:
                 farewell=True
                 await send('response.create',response={'instructions':'Agradeça brevemente e encerre a entrevista agora, sem avaliar o candidato.'})
             if loop.time()>=stage_end:
