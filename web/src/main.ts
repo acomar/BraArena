@@ -20,7 +20,7 @@ interface TemplateItem { id: string; title: string; }
   imports: [CommonModule, FormsModule],
   template: `<main>
     <h1>BraArena</h1><p>POC de entrevistas técnicas com IA</p>
-    <section>
+    <section *ngIf="!candidateMode">
       <h2>Administração</h2>
       <label>Token administrativo <input type="password" [(ngModel)]="token" autocomplete="off"></label>
       <h2>Configurar modelo de entrevista</h2>
@@ -60,7 +60,7 @@ interface TemplateItem { id: string; title: string; }
       <button (click)="save()">Salvar modelo</button>
       <p role="status">{{message}}</p>
     </section>
-    <section>
+    <section *ngIf="!candidateMode">
       <h2>Gerar link de entrevista</h2>
       <button (click)="loadTemplates()">Atualizar modelos</button>
       <label>Modelo
@@ -131,7 +131,10 @@ class App {
         if (player) { player.srcObject = event.streams[0]; void player.play(); }
       };
       const channel = this.peer.createDataChannel('oai-events');
-      channel.onopen = () => this.voiceMessage = 'Entrevista em andamento.';
+      channel.onopen = () => {
+        this.voiceMessage = 'Entrevista em andamento.';
+        channel.send(JSON.stringify({type:'response.create'}));
+      };
       channel.onmessage = event => {
         try { if (JSON.parse(event.data).type === 'error') this.voiceMessage = 'Erro na conversa.'; }
         catch { /* Ignore invalid event. */ }
@@ -212,7 +215,7 @@ class App {
     }, {headers:this.headers()}).subscribe({
       next: r => {
         this.candidateLink=window.location.origin + '/interview/' + encodeURIComponent(r.id) + '?token=' + encodeURIComponent(r.token);
-        this.linkMessage='Link gerado. A sala do candidato ainda não está implementada.';
+        this.linkMessage='Link gerado para teste técnico. Não enviar a candidatos reais antes da validação de segurança e privacidade.';
       },
       error: () => this.linkMessage='Não foi possível gerar o link.'
     });
