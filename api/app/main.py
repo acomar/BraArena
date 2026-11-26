@@ -13,6 +13,7 @@ from . import voice
 from .billing import card
 from .models import Access, Consent, Guard, Interview, Review, Template
 from .reports import analyze, assemble
+from .script import legacy_script, script_blocks
 from .store import connection, digest, migrate
 
 
@@ -54,7 +55,16 @@ app=FastAPI(title='BraArena',lifespan=lifespan,docs_url=None,redoc_url=None,open
 
 @app.exception_handler(RequestValidationError)
 async def invalid(request,err):
-    return JSONResponse({'detail':'Confira os campos e consentimentos.'},status_code=422)
+    message = 'Confira os campos e consentimentos.'
+    if request.url.path.startswith('/api/templates'):
+        fields = {'script':'As instruções aceitam até 10.000 caracteres.',
+                  'title':'O título aceita até 160 caracteres.',
+                  'durationMinutes':'A duração deve estar entre 1 e 180 minutos.',
+                  'budgetUsd':'O orçamento deve ser maior que zero e no máximo 10.000 USD.',
+                  'blocks':'Confira as etapas do modelo.'}
+        message = next((fields[key] for error in err.errors() for key in error['loc'] if key in fields),
+                       'Confira os dados do modelo.')
+    return JSONResponse({'detail':message},status_code=422)
 
 def admin(authorization:str=Header(default='')):
     if not secrets.compare_digest(authorization.encode(),('Bearer '+os.environ['ADMIN_TOKEN']).encode()):
@@ -78,8 +88,18 @@ def new_guard(body:Guard):
         return conn.execute("""INSERT INTO guardrails SELECT %s,COALESCE(MAX(version),0)+1,%s FROM guardrails WHERE name=%s
             RETURNING name,version,instruction""",(body.name,body.instruction,body.name)).fetchone()
 
-def resolve(conn,template):
-    data=template.model_dump()
+def resolve(conn,template,ident):
+    data=template.model_dump(exclude_none=True)
+    data['title'] = template.title or f'Entrevista {str(ident)[:8]}'
+    if template.script is not None:
+        if '\x00' in template.script:
+            raise HTTPException(422,'Remova os caracteres nulos das instruções.')
+        try:
+            data['blocks'] = script_blocks(template.script,template.durationMinutes)
+        except ValueError as error:
+            raise HTTPException(422,str(error)) from error
+    elif not template.blocks:
+        raise HTTPException(422,'Escreva as instruções da entrevista.')
     rules=[]
     for guard in template.guardrails:
         row=conn.execute("SELECT instruction FROM guardrails WHERE name=%s AND version=%s",(guard.name,guard.version)).fetchone()
@@ -87,19 +107,22 @@ def resolve(conn,template):
             raise HTTPException(422,'Versão de guardrail desconhecida.')
         rules.append(row['instruction'])
     data['instructions']=rules
-    return json.dumps(data)
+    return data
 
 @app.post('/api/templates',dependencies=[Depends(admin)],status_code=201)
 def create_template(template:Template):
     with connection() as conn:
+        ident=uuid4()
+        data=resolve(conn,template,ident)
         return conn.execute("INSERT INTO templates(id,title,definition) VALUES(%s,%s,%s::jsonb) RETURNING id",
-                            (uuid4(),template.title,resolve(conn,template))).fetchone()
+                            (ident,data['title'],json.dumps(data))).fetchone()
 
 @app.put('/api/templates/{ident}',dependencies=[Depends(admin)])
 def update_template(ident:UUID,template:Template):
     with connection() as conn:
+        data=resolve(conn,template,ident)
         row=conn.execute("UPDATE templates SET title=%s,definition=%s::jsonb WHERE id=%s RETURNING id",
-                         (template.title,resolve(conn,template),ident)).fetchone()
+                         (data['title'],json.dumps(data),ident)).fetchone()
         if not row:
             raise HTTPException(404,'Modelo inexistente.')
         return row
@@ -107,7 +130,11 @@ def update_template(ident:UUID,template:Template):
 @app.get('/api/templates',dependencies=[Depends(admin)])
 def templates():
     with connection() as conn:
-        return conn.execute("SELECT id,title,definition,created_at FROM templates ORDER BY created_at DESC").fetchall()
+        rows=conn.execute("SELECT id,title,definition,created_at FROM templates ORDER BY created_at DESC").fetchall()
+        for row in rows:
+            if 'script' not in row['definition']:
+                row['legacyScript']=legacy_script(row['definition'])
+        return rows
 
 @app.post('/api/interviews',dependencies=[Depends(admin)],status_code=201)
 def invite(body:Interview):

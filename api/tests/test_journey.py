@@ -182,3 +182,43 @@ class Journey(unittest.TestCase):
         self.assertEqual(r['cost']['status'],'consolidated')
         self.assertEqual(r['cost']['usd'],'0.000103')
         self.assertIsNone(r['cost']['billedUsd'])
+
+    def test_single_script_limits_privacy_and_snapshot(self):
+        from app.voice import stage_prompt
+        public = 'Explore a experiência da pessoa.\n'
+        script = public + 'Avaliação privada:\n' + '🔐' * (10000-len(public)-len('Avaliação privada:\n'))
+        path = '/api/templates'
+        for invalid in ['', '   ', script+'x', 'Avaliação privada:\nSomente referência']:
+            r = self.client.post(path,json={'script':invalid},headers=self.admin)
+            self.assertEqual(r.status_code,422)
+        r=self.client.post(path,json={'script':script},headers=self.admin)
+        self.assertEqual(r.status_code,201,r.text)
+        ident=r.json()['id']
+        saved=next(m for m in self.client.get(path,headers=self.admin).json() if m['id']==ident)
+        self.client.put(path+'/'+ident,headers=self.admin,json=saved['definition']).raise_for_status()
+        self.assertTrue(saved['title'])
+        self.assertNotIn('🔐',saved['title'])
+        self.assertEqual(saved['definition']['script'],script)
+        self.assertEqual(saved['definition']['blocks'][0]['timeboxSeconds'],1800)
+        invite=self.client.post('/api/interviews',headers=self.admin,json={'templateId':ident,'candidateName':'QA'}).json()
+        changed='Outra instrução'
+        self.client.put(path+'/'+ident,headers=self.admin,json={'script':changed}).raise_for_status()
+        with connection() as conn:
+            snapshot=conn.execute('SELECT definition FROM interviews WHERE id=%s',(invite['id'],)).fetchone()['definition']
+        prompt=stage_prompt(snapshot,0)
+        self.assertIn(public.strip(),prompt)
+        self.assertNotIn(changed,prompt)
+        self.assertNotIn('🔐',prompt)
+        self.assertIn('🔐',snapshot['blocks'][0]['expectedAnswer'])
+        info=self.client.post('/api/candidate/'+invite['id']+'/info',json={'token':invite['token']})
+        self.assertEqual(info.status_code,200)
+        self.assertNotIn(public.strip(),info.text)
+        self.assertNotIn('🔐',info.text)
+
+    def test_legacy_editor_preserves_stages_and_private_fields(self):
+        from app.script import legacy_script,script_blocks
+        blocks=[{'type':'question','prompt':'Primeira pergunta','timeboxSeconds':50,'drivers':['Clareza'],
+                 'expectedAnswer':'Somente gestor'},{'type':'closing','prompt':'Agradeça','timeboxSeconds':10,
+                 'drivers':[],'expectedAnswer':None}]
+        rendered=legacy_script({'blocks':blocks})
+        self.assertEqual(script_blocks(rendered,1),blocks)

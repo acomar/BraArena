@@ -8,20 +8,18 @@
 <main><h1>{{tab}}</h1><p class="notice" *ngIf="message" role="status">{{message}}</p>
 <ng-container *ngIf="tab==='Modelos'"><section class="panel"><div class="line"><h2>Modelos de entrevista</h2><button (click)="newModel()">Novo modelo</button></div>
 <p *ngIf="!models.length">Crie seu primeiro modelo no editor abaixo.</p><div class="listrow" *ngFor="let m of models"><strong>{{m.title}}</strong><div><button (click)="edit(m)">Editar</button><button (click)="edit(m,true)">Duplicar</button></div></div></section>
-<section class="panel"><h2>{{editId?'Editar modelo':'Criar modelo'}}</h2><label>Título<input [(ngModel)]="model.title" maxlength="160"></label>
+<section class="panel"><h2>{{editId?'Editar modelo':'Criar modelo'}}</h2><label>Instruções da entrevista<textarea rows="13" [(ngModel)]="model.script" aria-describedby="script-help script-count"
+  (ngModelChange)="editorError=''" placeholder="Descreva a abertura, as perguntas, o que aprofundar e como encerrar."></textarea></label>
+<p id="script-count">{{scriptLength}} / 10.000 caracteres</p>
+<p id="script-help">Para incluir gabarito e critérios exclusivos do relatório, comece uma linha com <strong>Avaliação privada:</strong> e escreva-os abaixo.</p>
+<details><summary>Opções do modelo</summary>
+<label>Título (opcional)<input [(ngModel)]="model.title" maxlength="160" placeholder="Gerado automaticamente se ficar em branco"></label>
 <div class="grid"><label>Tempo total (min)<input type="number" min="1" max="180" [(ngModel)]="model.durationMinutes"></label>
 <label>Orçamento por entrevista (USD)<input type="number" step=".1" min=".01" [(ngModel)]="model.budgetUsd"></label></div>
 <label class="check"><input type="checkbox" [(ngModel)]="model.recordingEnabled"> Oferecer gravação opcional</label>
 <div *ngIf="guards.length"><h3>Guardrails do modelo</h3><label class="check" *ngFor="let g of guards"><input type="checkbox" [checked]="hasGuard(g)" (change)="toggle(g)">{{g.name}} · v{{g.version}}</label></div>
-<div class="block" *ngFor="let b of model.blocks;index as i" (dragover)="$event.preventDefault()" (drop)="$event.preventDefault();move(drag,i)">
-<div class="line"><h3 draggable="true" (dragstart)="drag=i" (dragend)="drag=-1">⠿ Etapa {{i+1}}</h3><div><button [disabled]="i===0" (click)="move(i,i-1)" aria-label="Mover para cima">↑</button>
-<button [disabled]="i===model.blocks.length-1" (click)="move(i,i+1)" aria-label="Mover para baixo">↓</button><button [disabled]="model.blocks.length===1" (click)="model.blocks.splice(i,1)">Remover</button></div></div>
-<div class="grid"><label>Tipo<select [(ngModel)]="b.type"><option value="intro">Apresentação</option><option value="question">Pergunta</option><option value="situation">Situação</option><option value="closing">Encerramento</option></select></label>
-<label>Tempo da etapa (s)<input type="number" min="1" [(ngModel)]="b.timeboxSeconds"></label></div>
-<label>Pergunta ou instrução<textarea [(ngModel)]="b.prompt" rows="2"></textarea></label>
-<ng-container *ngIf="b.type==='question'||b.type==='situation'"><label>Resposta esperada · privada<textarea [(ngModel)]="b.expectedAnswer" rows="2"></textarea></label>
-<label>Critérios de igual peso (separados por vírgula)<input [value]="b.drivers.join(',')" (change)="b.drivers=$any($event.target).value.split(',')"></label></ng-container></div>
-<button (click)="add()">Adicionar etapa</button><button class="primary" (click)="save()" [disabled]="busy">Salvar modelo</button></section></ng-container>
+</details><p *ngIf="editorError" role="alert" class="notice">{{editorError}}</p>
+<button class="primary" (click)="save()" [disabled]="busy">Salvar modelo</button></section></ng-container>
 <section *ngIf="tab==='Convites'" class="panel"><h2>Gerar convite individual</h2><label>Modelo<select [(ngModel)]="selected"><option value="">Selecione</option><option *ngFor="let m of models" [value]="m.id">{{m.title}}</option></select></label>
 <label>Nome do candidato<input [(ngModel)]="name"></label><label>Contexto para o gestor (opcional)<textarea [(ngModel)]="context"></textarea></label>
 <label>Validade do convite (horas)<input type="number" min="1" max="2160" [(ngModel)]="validity"></label><button class="primary" (click)="invite()" [disabled]="busy">Gerar link</button>

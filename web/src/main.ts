@@ -7,16 +7,19 @@ import {Candidate} from './candidate';
 import {request,errorMessage} from './http';
 
 interface Guard {name:string;version:number;instruction?:string}
-interface Block {type:string;prompt:string;expectedAnswer:string;drivers:string[];timeboxSeconds:number}
-function block():Block {return {type:'question',prompt:'',expectedAnswer:'',drivers:[],timeboxSeconds:180};}
-function blank(){return {title:'',durationMinutes:30,recordingEnabled:false,budgetUsd:6,blocks:[block()],guardrails:[] as Guard[]};}
-interface Model {id:string;title:string;definition:ReturnType<typeof blank>}
+function blank(){return {title:'',script:'',durationMinutes:30,recordingEnabled:false,budgetUsd:6,guardrails:[] as Guard[]};}
+type Editor = ReturnType<typeof blank>;
+interface Model {
+  id:string; title:string; legacyScript?:string;
+  definition: Omit<Editor,'script'> & {script?:string;blocks:unknown[]};
+}
 @Component({selector:'app-root',standalone:true,imports:[CommonModule,FormsModule,Candidate],templateUrl:'./admin.html'})
 class App{
   private view=inject(ChangeDetectorRef);
   room=location.pathname.startsWith('/interview/');token='';logged=false;busy=false;message='';tab='Modelos';
   tabs=['Modelos','Convites','Histórico','Guardrails','Custos']; models:Model[]=[];guards:Guard[]=[];
-  rows:any[]=[];model=blank();editId='';selected='';name='';context='';validity=168;link='';guardName='';instruction='';drag=-1;
+  rows:any[]=[];model=blank();editId='';selected='';name='';context='';validity=168;link='';guardName='';instruction='';
+  source?:Model; editorError='';
   detail:any=null;detailId='';audioUrl='';spend:any=null;
   start=new Date(Date.now()-30*86400000).toISOString().slice(0,10); end=new Date().toISOString().slice(0,10);
   status:Record<string,string>={scheduled:'Agendada',in_progress:'Em andamento',connecting:'Conectando',completed:'Concluída',expired:'Expirada',interrupted:'Interrompida'};
@@ -25,14 +28,40 @@ class App{
   async refresh(){[this.models,this.guards,this.rows]=await Promise.all([this.api('templates'),this.api('guardrails'),this.api('interviews')]);}
   login(){void this.run(async()=>{await this.refresh();this.logged=true;});}
   selectTab(t:string){this.tab=t;this.message='';if(t==='Histórico')void this.run(()=>this.refresh());if(t==='Custos')this.total();}
-  newModel(){this.model=blank();this.editId='';this.message='';}
-  edit(m:Model,copy=false){this.model={...blank(),...structuredClone(m.definition)};this.editId=copy?'':m.id;if(copy)this.model.title+=' (cópia)';}
-  add(){this.model.blocks.push(block());}
-  move(from:number,to:number){if(from<0 || to<0 || to>=this.model.blocks.length)return;this.model.blocks.splice(to,0,this.model.blocks.splice(from,1)[0]);this.drag=-1;}
+  newModel(){this.model=blank();this.source=undefined;this.editId='';this.message='';this.editorError='';}
+  edit(m:Model,copy=false){
+    this.source=m;
+    const d=m.definition;
+    this.model={...blank(),title:copy ? Array.from(m.title).slice(0,152).join('')+' (cópia)' : m.title,
+      script:d.script ?? m.legacyScript ?? '', durationMinutes:d.durationMinutes,
+      budgetUsd:d.budgetUsd??6, recordingEnabled:d.recordingEnabled??false, guardrails:structuredClone(d.guardrails??[])};
+    this.editId=copy?'':m.id;this.message='';this.editorError='';
+  }
+  get scriptLength(){return Array.from(this.model.script).length;}
+  get originalStages(){return this.source?.legacyScript===this.model.script ? this.source.definition.blocks : undefined;}
   hasGuard(g:Guard){return this.model.guardrails.some(x=>x.name===g.name && x.version===g.version);}
   toggle(g:Guard){if(this.hasGuard(g))this.model.guardrails=this.model.guardrails.filter(x=>!(x.name===g.name&&x.version===g.version));else this.model.guardrails.push({name:g.name,version:g.version});}
-  save(){void this.run(async()=>{const r=await this.api('templates'+(this.editId?'/'+this.editId:''),this.editId?'PUT':'POST',this.model);
-    this.editId=r.id;this.selected=r.id;await this.refresh();this.message='Modelo salvo.';});}
+  save(){
+    this.editorError='';
+    const {script,...options}=this.model;
+    if(!script.trim()){this.editorError='Escreva as instruções da entrevista.';return;}
+    const blocks=this.originalStages;
+    if(this.scriptLength>10000 && !blocks){this.editorError='Reduza as instruções para até 10.000 caracteres.';return;}
+    if(!Number.isInteger(options.durationMinutes) || options.durationMinutes<1 || options.durationMinutes>180){
+      this.editorError='A duração deve estar entre 1 e 180 minutos.';return;
+    }
+    if(!(options.budgetUsd>0 && options.budgetUsd<=10000)){this.editorError='Informe um orçamento entre 0,01 e 10.000 USD.';return;}
+    void this.run(async()=>{
+      try {
+        const payload=blocks ? {...options,blocks} : {...options,script};
+        const r=await this.api('templates'+(this.editId?'/'+this.editId:''),this.editId?'PUT':'POST',payload);
+        this.editId=r.id;this.selected=r.id;this.message='Modelo salvo.';
+      } catch(e){this.editorError=errorMessage(e);return;}
+      await this.refresh();
+      this.source=this.models.find(m=>m.id===this.editId);
+      if(this.source)this.model.title=this.source.title;
+    });
+  }
   invite(){this.link='';void this.run(async()=>{const r=await this.api('interviews','POST',{templateId:this.selected,candidateName:this.name,candidateContext:this.context,validityHours:this.validity});
     this.link=location.origin+'/interview/'+r.id+'#token='+r.token;await this.refresh();this.message='Convite gerado.';});}
   guard(){void this.run(async()=>{await this.api('guardrails','POST',{name:this.guardName,instruction:this.instruction});await this.refresh();this.message='Versão salva.';});}

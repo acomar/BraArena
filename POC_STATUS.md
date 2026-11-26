@@ -4,7 +4,7 @@ A branch `feat/ai-interview-poc` contém a aplicação Angular/FastAPI. A aplica
 
 ## Operação
 
-O gestor entra com o token administrativo, cadastra as versões de regras e configura modelos, etapas, critérios, orçamento e gravação. Cada convite congela a definição do modelo, as versões das regras e a tabela de tarifas. O link carrega um segredo no fragmento da URL. O banco mantém o hash. Links antigos que usam a query continuam aceitos.
+Em **Modelos**, escreva as instruções em um único campo de até 10.000 caracteres e clique em **Salvar modelo**. Título, tempo total, orçamento, gravação e regras reutilizáveis ficam em **Opções do modelo**. Sem título, o sistema gera um identificador de exibição. Para manter gabarito e critérios fora da conversa por voz, escreva uma linha com `Avaliação privada:` e coloque essas notas abaixo dela. Modelos antigos aparecem no mesmo editor com as etapas e os tempos originais. O formato opcional `Etapa 1 · Pergunta (90 s)` delimita uma etapa com tempo próprio. Cada convite congela a definição do modelo, as versões das regras e a tabela de tarifas. O link carrega um segredo no fragmento da URL. O banco mantém o hash. Links antigos que usam a query continuam aceitos.
 
 O candidato verifica som e microfone, aceita o processamento e decide separadamente sobre gravação. A API abre a chamada por SDP e cria uma credencial local de sessão. A chave da OpenAI permanece no servidor. Um único processo Uvicorn por instalação coordena o WebSocket de controle, a duração das etapas e o encerramento. Uma queda curta de rede pode ser recuperada pelo ICE. Se a conexão se perder definitivamente, o gestor precisa emitir outro convite.
 
