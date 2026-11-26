@@ -1,0 +1,44 @@
+<interview-room *ngIf="room"></interview-room>
+<div *ngIf="!room" class="shell">
+<header class="top"><div class="brand">Bra<span>Arena</span></div><span>Painel do gestor</span><button *ngIf="logged" (click)="logout()">Sair</button></header>
+<main *ngIf="!logged" class="login"><section class="panel"><h1>Acessar painel</h1><p>Entre para configurar entrevistas e revisar as conversas da sua equipe.</p>
+<form (ngSubmit)="login()"><label>Token administrativo<input type="password" name="token" [(ngModel)]="token" required autocomplete="current-password"></label>
+<button class="primary" [disabled]="busy">Entrar</button></form><p role="status">{{message}}</p></section></main>
+<div *ngIf="logged" class="workspace"><nav aria-label="Painel do gestor"><button *ngFor="let t of tabs" (click)="selectTab(t)" [class.current]="tab===t">{{t}}</button></nav>
+<main><h1>{{tab}}</h1><p class="notice" *ngIf="message" role="status">{{message}}</p>
+<ng-container *ngIf="tab==='Modelos'"><section class="panel"><div class="line"><h2>Modelos de entrevista</h2><button (click)="newModel()">Novo modelo</button></div>
+<p *ngIf="!models.length">Crie seu primeiro modelo no editor abaixo.</p><div class="listrow" *ngFor="let m of models"><strong>{{m.title}}</strong><div><button (click)="edit(m)">Editar</button><button (click)="edit(m,true)">Duplicar</button></div></div></section>
+<section class="panel"><h2>{{editId?'Editar modelo':'Criar modelo'}}</h2><label>Título<input [(ngModel)]="model.title" maxlength="160"></label>
+<div class="grid"><label>Tempo total (min)<input type="number" min="1" max="180" [(ngModel)]="model.durationMinutes"></label>
+<label>Orçamento por entrevista (USD)<input type="number" step=".1" min=".01" [(ngModel)]="model.budgetUsd"></label></div>
+<label class="check"><input type="checkbox" [(ngModel)]="model.recordingEnabled"> Oferecer gravação opcional</label>
+<div *ngIf="guards.length"><h3>Guardrails do modelo</h3><label class="check" *ngFor="let g of guards"><input type="checkbox" [checked]="hasGuard(g)" (change)="toggle(g)">{{g.name}} · v{{g.version}}</label></div>
+<div class="block" *ngFor="let b of model.blocks;index as i" (dragover)="$event.preventDefault()" (drop)="$event.preventDefault();move(drag,i)">
+<div class="line"><h3 draggable="true" (dragstart)="drag=i" (dragend)="drag=-1">⠿ Etapa {{i+1}}</h3><div><button [disabled]="i===0" (click)="move(i,i-1)" aria-label="Mover para cima">↑</button>
+<button [disabled]="i===model.blocks.length-1" (click)="move(i,i+1)" aria-label="Mover para baixo">↓</button><button [disabled]="model.blocks.length===1" (click)="model.blocks.splice(i,1)">Remover</button></div></div>
+<div class="grid"><label>Tipo<select [(ngModel)]="b.type"><option value="intro">Apresentação</option><option value="question">Pergunta</option><option value="situation">Situação</option><option value="closing">Encerramento</option></select></label>
+<label>Tempo da etapa (s)<input type="number" min="1" [(ngModel)]="b.timeboxSeconds"></label></div>
+<label>Pergunta ou instrução<textarea [(ngModel)]="b.prompt" rows="2"></textarea></label>
+<ng-container *ngIf="b.type==='question'||b.type==='situation'"><label>Resposta esperada · privada<textarea [(ngModel)]="b.expectedAnswer" rows="2"></textarea></label>
+<label>Critérios de igual peso (separados por vírgula)<input [value]="b.drivers.join(',')" (change)="b.drivers=$any($event.target).value.split(',')"></label></ng-container></div>
+<button (click)="add()">Adicionar etapa</button><button class="primary" (click)="save()" [disabled]="busy">Salvar modelo</button></section></ng-container>
+<section *ngIf="tab==='Convites'" class="panel"><h2>Gerar convite individual</h2><label>Modelo<select [(ngModel)]="selected"><option value="">Selecione</option><option *ngFor="let m of models" [value]="m.id">{{m.title}}</option></select></label>
+<label>Nome do candidato<input [(ngModel)]="name"></label><label>Contexto para o gestor (opcional)<textarea [(ngModel)]="context"></textarea></label>
+<label>Validade do convite (horas)<input type="number" min="1" max="2160" [(ngModel)]="validity"></label><button class="primary" (click)="invite()" [disabled]="busy">Gerar link</button>
+<p *ngIf="link">Compartilhe este link individual com o candidato.</p><a *ngIf="link" [href]="link">{{link}}</a></section>
+<section *ngIf="tab==='Guardrails'" class="panel"><h2>Regras reutilizáveis</h2><label>Nome da regra<input [(ngModel)]="guardName"></label>
+<label>Instrução<textarea rows="3" [(ngModel)]="instruction"></textarea></label><button class="primary" (click)="guard()">Salvar nova versão</button>
+<div *ngFor="let g of guards" class="block"><strong>{{g.name}} · v{{g.version}}</strong><p>{{g.instruction}}</p><button (click)="guardName=g.name;instruction=g.instruction || ''">Revisar regra</button></div></section>
+<ng-container *ngIf="tab==='Histórico'"><section class="panel"><h2>Entrevistas</h2><p *ngIf="!rows.length">Nenhum convite gerado.</p>
+<div class="listrow" *ngFor="let r of rows"><div><strong>{{r.candidate_name}}</strong><p>{{r.title}} · {{status[r.status] || r.status}}</p></div><div>{{r.cost?.usd ? 'USD '+r.cost.usd : ''}} <button *ngIf="r.status==='completed'" (click)="open(r.id)">Ver relatório</button></div></div></section>
+<section *ngIf="detail" class="panel"><h2>Relatório técnico</h2><p>{{detail.report.summary || 'Resumo de IA indisponível.'}}</p>
+<p *ngIf="detail.report.transcriptIncomplete">Transcrição incompleta.</p><p *ngFor="let n of detail.report.notices">{{n}}</p>
+<div *ngFor="let s of detail.report.sections" class="block"><strong>{{s.prompt}}</strong><p>{{s.answered?'Resposta registrada':'Sem resposta registrada'}} · {{s.drivers.join(', ')}}</p>
+<ng-container *ngFor="let t of detail.report.turns"><p *ngIf="s.candidateTurns.includes(t.event_id)">{{t.content}}</p></ng-container></div>
+<details><summary>Transcrição completa</summary><p *ngFor="let t of detail.report.turns">{{t.created_at | date:'shortTime'}} · {{t.speaker==='candidate'?'Candidato':'IA'}} · {{t.content || '[incompleta]'}}</p></details>
+<p>Custo calculado em USD · {{detail.report.cost?.usd ?? 'indisponível'}} · {{detail.report.cost?.status}}</p><p *ngIf="detail.report.cost?.indicativeBrl">Conversão indicativa · R$ {{detail.report.cost.indicativeBrl}}</p>
+<details><summary>Consumo e tarifas</summary><pre>{{detail.report.cost | json}}</pre></details>
+<div *ngIf="detail.recording"><button (click)="play()">Ouvir gravação</button><button (click)="erase()">Excluir gravação</button><audio *ngIf="audioUrl" controls [src]="audioUrl"></audio></div>
+<label>Revisão do gestor<textarea [(ngModel)]="detail.review" rows="3"></textarea></label><button (click)="review()">Salvar revisão</button><button (click)="download()">Exportar JSON</button></section></ng-container>
+<section *ngIf="tab==='Custos'" class="panel"><h2>Consumo por período</h2><div class="grid"><label>De<input type="date" [(ngModel)]="start"></label><label>Até<input type="date" [(ngModel)]="end"></label></div><button (click)="total()">Consultar</button>
+<div *ngIf="spend" class="block"><strong>USD {{spend.usd}}</strong><p>{{spend.completed}} entrevistas encerradas · {{spend.incomplete}} com custo incompleto</p><p>Valores calculados pelo uso disponível. Consulte a fatura da OpenAI para o valor cobrado.</p></div></section></main></div></div>

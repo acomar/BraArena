@@ -1,0 +1,12 @@
+<main class="room"><header class="brand">Bra<span>Arena</span></header>
+<section class="panel room-panel"><h1>{{title}}</h1>
+<div class="robot-stage"><div class="robot" [attr.data-state]="robotState" aria-hidden="true"><div class="face"><div class="eyes"><i class="eye"></i><i class="eye"></i></div><div class="mouth" [style.height.px]="mouthHeight"></div></div></div>
+<strong>{{labels[robotState]}}</strong></div>
+<div *ngIf="available && !done && !active"><p>Duração máxima de {{minutes}} min. Sua voz será processada pela OpenAI e transcrita para revisão técnica pelo gestor.</p>
+<button (click)="testAudio()" [disabled]="testing || busy">Testar microfone e saída</button>
+<meter *ngIf="testing" min="0" max="100" [value]="level" aria-label="Nível do microfone"></meter>
+<label class="check"><input type="checkbox" [(ngModel)]="consent" [disabled]="busy"> Aceito a transcrição e o processamento por IA.</label>
+<label *ngIf="recording" class="check"><input type="checkbox" [(ngModel)]="recordConsent" [disabled]="busy"> Autorizo também a gravação das duas vozes para o gestor (opcional).</label>
+<button class="primary" (click)="start()" [disabled]="!configured || !consent || busy || testing">Iniciar entrevista</button></div>
+<div *ngIf="active"><b>Tempo restante {{clock}}</b> <button (click)="stop()">Encerrar entrevista</button></div>
+<audio id="voice-output" autoplay controls [hidden]="!active"></audio><p role="status">{{message}}</p></section></main>
