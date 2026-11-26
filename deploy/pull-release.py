@@ -61,7 +61,7 @@ def main():
             subprocess.run(['docker','load'],stdin=f,check=True)
         for component in ('api','web'):
             image='braarena-'+component
-            subprocess.run(['docker','tag',image+':development','ghcr.io/acomar/'+image+':'+sha],check=True)
+            subprocess.run(['docker','tag',image+':development','ghcr.io/acomar/braarena-poc-'+component+':'+sha],check=True)
         subprocess.run(['sh','deploy-remote.sh',sha],check=True)
 
 if __name__=='__main__':

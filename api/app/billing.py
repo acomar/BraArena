@@ -67,9 +67,5 @@ def cost(events, complete, rates=None):
         components[kind] = {'usd':format(subtotal,'.6f') if valid and selected else None,'tokens':tokens,'events':len(selected),'knownUsd':format(subtotal,'.6f') if selected else None}
     known = total>0 or any(c['usd'] is not None for c in components.values())
     complete = complete and all(c['usd'] is not None for c in components.values())
-    fx = os.environ.get('BRL_PER_USD')
-    return {'status':'consolidated_usage' if complete else 'incomplete_estimate',
-            'usd':format(total,'.6f') if known else None,'brlIndicative':format(total*Decimal(fx),'.2f') if known and fx else None,
-            'brlPerUsd':fx,'components':components,'rateCard':rates,'billedUsd':None}
     return {'status':'consolidated' if complete else 'estimated' if known else 'missing_usage',
             'usd':format(total,'.6f') if known else None,'components':components,'rates':rates,'billedUsd':None}

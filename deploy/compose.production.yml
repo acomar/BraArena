@@ -16,7 +16,7 @@ services:
       timeout: 4s
       retries: 8
   api:
-    image: ghcr.io/acomar/braarena-api:${RELEASE_SHA:?}
+    image: ghcr.io/acomar/braarena-poc-api:${RELEASE_SHA:?}
     restart: unless-stopped
     mem_limit: 320m
     environment:
@@ -37,7 +37,7 @@ services:
       timeout: 5s
       retries: 8
   web:
-    image: ghcr.io/acomar/braarena-web:${RELEASE_SHA:?}
+    image: ghcr.io/acomar/braarena-poc-web:${RELEASE_SHA:?}
     restart: unless-stopped
     mem_limit: 96m
     environment:

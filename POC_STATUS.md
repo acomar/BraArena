@@ -22,3 +22,5 @@ O navegador mistura a saída remota e o microfone em Web Audio, comprime em WebM
 - O relatório sinaliza transcrição incompleta, ausência de uso ou falha da análise. Em uma queda de observador, a API tenta desligar a chamada e guarda o identificador para tentar novamente se a OpenAI estiver inacessível.
 
 [Controle Realtime pelo servidor](https://developers.openai.com/api/docs/guides/realtime-server-controls) · [Negociação WebRTC](https://developers.openai.com/api/docs/guides/realtime-webrtc)
+
+A suíte de navegador usa ainda um segundo par WebRTC no Chromium, com áudio sintético, para verificar o movimento da boca e a presença de uma gravação WebM/Opus exclusivamente no fluxo autorizado. O CI valida o SHA servido por HTTPS a partir de um runner externo. As imagens do GHCR usam os nomes `acomar/braarena-poc-api` e `acomar/braarena-poc-web`.

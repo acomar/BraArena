@@ -46,16 +46,31 @@ jobs:
         run: |
           set -euo pipefail
           docker load -i braarena-images.tar.gz
-          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          for component in api web; do
-            tag="ghcr.io/acomar/braarena-$component:$GITHUB_SHA"
-            docker tag "braarena-$component:development" "$tag"
-            docker push "$tag"
-          done
           # The VPS can retrieve the identical images without long-lived SSH or registry credentials.
           gh release view "poc-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "poc-$GITHUB_SHA" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease --title "POC ${GITHUB_SHA:0:8}" --notes "Imagens verificadas pelo CI."
           gh release upload "poc-$GITHUB_SHA" braarena-images.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+  registry:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: verified-images}
+      - name: Push single-platform images linked to BraArena
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker load -i braarena-images.tar.gz
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          for component in api web; do
+            tag="ghcr.io/acomar/braarena-poc-$component:$GITHUB_SHA"
+            docker tag "braarena-$component:development" "$tag"
+            docker push --platform linux/amd64 "$tag"
+          done
   smoke:
     needs: publish
     runs-on: ubuntu-latest
