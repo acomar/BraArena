@@ -4,6 +4,7 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
+from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
 import psycopg
@@ -41,6 +42,10 @@ async def lifespan(app: FastAPI):
             created_at timestamptz DEFAULT now(), PRIMARY KEY(interview_id,response_id))""")
         conn.execute("ALTER TABLE interviews ADD COLUMN IF NOT EXISTS started_at timestamptz")
         conn.execute("ALTER TABLE interviews ADD COLUMN IF NOT EXISTS ended_at timestamptz")
+    with connection() as conn:
+        conn.execute("""CREATE TABLE IF NOT EXISTS interview_reports (
+            interview_id uuid PRIMARY KEY REFERENCES interviews(id),
+            report jsonb NOT NULL, created_at timestamptz DEFAULT now())""")
     yield
 
 app = FastAPI(title="BraArena AI Interview API", lifespan=lifespan)
@@ -238,3 +243,67 @@ def interview_usage(interview_id: UUID):
     with connection() as conn:
         rows = conn.execute("SELECT response_id,usage,source,created_at FROM realtime_usage WHERE interview_id=%s ORDER BY created_at",(interview_id,)).fetchall()
     return {"status":"unverified","events":rows}
+
+
+# Explicitly configured USD per million tokens. No silent default prices.
+RATE_KEYS = ("text_input", "text_cached", "audio_input", "audio_cached", "text_output", "audio_output")
+
+def estimate_voice_cost(events):
+    try:
+        config = json.loads(os.environ.get("REALTIME_RATE_CARD", "{}"))
+        rates = {k: Decimal(str(config[k])) for k in RATE_KEYS}
+        if not config.get("version") or config.get("model") != "gpt-realtime" or any(not v.is_finite() or v < 0 for v in rates.values()):
+            raise ValueError("Invalid rate card")
+        if not events:
+            return {"status":"missing_usage","usd":None}
+        total = Decimal(0)
+        def count(obj, key):
+            n = obj[key]
+            if type(n) is not int or not 0 <= n <= 100000000:
+                raise ValueError("Invalid token count")
+            return n
+        for event in events:
+            u = event["usage"]
+            i, o = u["input_token_details"], u["output_token_details"]
+            c = i.get("cached_tokens_details", {})
+            ti, ai = count(i,"text_tokens"), count(i,"audio_tokens")
+            to, ao = count(o,"text_tokens"), count(o,"audio_tokens")
+            tc, ac = count(c,"text_tokens"), count(c,"audio_tokens")
+            if tc > ti or ac > ai or tc+ac != count(i,"cached_tokens") or ti+ai != count(u,"input_tokens") or to+ao != count(u,"output_tokens"):
+                raise ValueError("Incomplete token breakdown")
+            total += ((ti-tc)*rates["text_input"]+tc*rates["text_cached"]+(ai-ac)*rates["audio_input"]+ac*rates["audio_cached"]+to*rates["text_output"]+ao*rates["audio_output"])/Decimal(1000000)
+        return {"status":"estimated_unverified","usd":str(total.quantize(Decimal("0.000001"))),"rateVersion":config["version"],"model":config["model"],"rates":{k:str(v) for k,v in rates.items()},"excludes":["transcription","post_interview_processing","storage"]}
+    except (KeyError, TypeError, ValueError, InvalidOperation, AttributeError):
+        return {"status":"incomplete_usage_or_rate_card","usd":None}
+
+@app.get("/api/interviews", dependencies=[Depends(admin)])
+def list_interviews():
+    with connection() as conn:
+        return conn.execute("""SELECT i.id,i.candidate_name,i.status,i.started_at,i.ended_at,t.title,
+            r.report->'voiceCost' AS voice_cost FROM interviews i JOIN templates t ON t.id=i.template_id
+            LEFT JOIN interview_reports r ON r.interview_id=i.id ORDER BY i.created_at DESC""").fetchall()
+
+@app.post("/api/interviews/{interview_id}/report", dependencies=[Depends(admin)])
+def generate_report(interview_id: UUID):
+    with connection() as conn:
+        row = conn.execute("""SELECT id,status,started_at,ended_at FROM interviews WHERE id=%s FOR UPDATE""",(interview_id,)).fetchone()
+        if not row:
+            raise HTTPException(404,"Interview not found")
+        if row["status"] != "completed":
+            raise HTTPException(409,"Interview not completed")
+        events = conn.execute("SELECT usage FROM realtime_usage WHERE interview_id=%s",(interview_id,)).fetchall()
+        turns = conn.execute("SELECT speaker,content,created_at FROM transcript_turns WHERE interview_id=%s ORDER BY id",(interview_id,)).fetchall()
+        report = {"evidenceStatus":"browser_unverified","durationSeconds":(row["ended_at"]-row["started_at"]).total_seconds() if row["started_at"] and row["ended_at"] else None,
+            "voiceCost":estimate_voice_cost(events),"turnCount":len(turns),
+            "summary":None,"technicalAssessment":None,"assessmentStatus":"awaiting_trusted_evidence"}
+        conn.execute("""INSERT INTO interview_reports(interview_id,report) VALUES(%s,%s::jsonb)
+            ON CONFLICT(interview_id) DO UPDATE SET report=excluded.report,created_at=now()""",(interview_id,json.dumps(report)))
+    return report
+
+@app.get("/api/interviews/{interview_id}/report", dependencies=[Depends(admin)])
+def get_report(interview_id: UUID):
+    with connection() as conn:
+        row = conn.execute("SELECT report,created_at FROM interview_reports WHERE interview_id=%s",(interview_id,)).fetchone()
+    if not row:
+        raise HTTPException(404,"Report not generated")
+    return row
