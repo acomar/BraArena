@@ -195,7 +195,10 @@ class Journey(unittest.TestCase):
         self.assertEqual(r.status_code,201,r.text)
         ident=r.json()['id']
         saved=next(m for m in self.client.get(path,headers=self.admin).json() if m['id']==ident)
-        self.client.put(path+'/'+ident,headers=self.admin,json=saved['definition']).raise_for_status()
+        self.assertEqual(r.json(),saved)
+        updated=self.client.put(path+'/'+ident,headers=self.admin,json=saved['definition'])
+        self.assertEqual(updated.status_code,200)
+        self.assertEqual(updated.json(),saved)
         self.assertTrue(saved['title'])
         self.assertNotIn('🔐',saved['title'])
         self.assertEqual(saved['definition']['script'],script)

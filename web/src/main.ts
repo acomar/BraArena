@@ -54,12 +54,14 @@ class App{
     void this.run(async()=>{
       try {
         const payload=blocks ? {...options,blocks} : {...options,script};
-        const r=await this.api('templates'+(this.editId?'/'+this.editId:''),this.editId?'PUT':'POST',payload);
-        this.editId=r.id;this.selected=r.id;this.message='Modelo salvo.';
-      } catch(e){this.editorError=errorMessage(e);return;}
-      await this.refresh();
-      this.source=this.models.find(m=>m.id===this.editId);
-      if(this.source)this.model.title=this.source.title;
+        const saved:Model=await this.api('templates'+(this.editId?'/'+this.editId:''),this.editId?'PUT':'POST',payload);
+        const existing=this.models.some(model=>model.id===saved.id);
+        this.models=existing ? this.models.map(model=>model.id===saved.id?saved:model) : [saved,...this.models];
+        this.source=saved;
+        this.model.title=saved.title;
+        this.editId=this.selected=saved.id;
+        this.message='Modelo salvo.';
+      } catch(e){this.editorError=errorMessage(e);}
     });
   }
   invite(){this.link='';void this.run(async()=>{const r=await this.api('interviews','POST',{templateId:this.selected,candidateName:this.name,candidateContext:this.context,validityHours:this.validity});

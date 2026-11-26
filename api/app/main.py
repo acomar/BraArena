@@ -109,32 +109,35 @@ def resolve(conn,template,ident):
     data['instructions']=rules
     return data
 
+def editor_model(row):
+    if 'script' not in row['definition']:
+        row['legacyScript'] = legacy_script(row['definition'])
+    return row
+
 @app.post('/api/templates',dependencies=[Depends(admin)],status_code=201)
 def create_template(template:Template):
     with connection() as conn:
         ident=uuid4()
         data=resolve(conn,template,ident)
-        return conn.execute("INSERT INTO templates(id,title,definition) VALUES(%s,%s,%s::jsonb) RETURNING id",
+        row=conn.execute("INSERT INTO templates(id,title,definition) VALUES(%s,%s,%s::jsonb) RETURNING id,title,definition,created_at",
                             (ident,data['title'],json.dumps(data))).fetchone()
+        return editor_model(row)
 
 @app.put('/api/templates/{ident}',dependencies=[Depends(admin)])
 def update_template(ident:UUID,template:Template):
     with connection() as conn:
         data=resolve(conn,template,ident)
-        row=conn.execute("UPDATE templates SET title=%s,definition=%s::jsonb WHERE id=%s RETURNING id",
+        row=conn.execute("UPDATE templates SET title=%s,definition=%s::jsonb WHERE id=%s RETURNING id,title,definition,created_at",
                          (data['title'],json.dumps(data),ident)).fetchone()
         if not row:
             raise HTTPException(404,'Modelo inexistente.')
-        return row
+        return editor_model(row)
 
 @app.get('/api/templates',dependencies=[Depends(admin)])
 def templates():
     with connection() as conn:
         rows=conn.execute("SELECT id,title,definition,created_at FROM templates ORDER BY created_at DESC").fetchall()
-        for row in rows:
-            if 'script' not in row['definition']:
-                row['legacyScript']=legacy_script(row['definition'])
-        return rows
+        return [editor_model(row) for row in rows]
 
 @app.post('/api/interviews',dependencies=[Depends(admin)],status_code=201)
 def invite(body:Interview):
