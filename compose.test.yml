@@ -1,0 +1,25 @@
+name: braarena-test
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: interview_test
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: ephemeral-test-only
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d interview_test"]
+      interval: 2s
+      retries: 20
+  test:
+    image: braarena-api:development
+    volumes:
+      - ./api/app:/app/app:ro
+      - ./api/tests:/app/tests:ro
+    environment:
+      DATABASE_URL: postgresql://test:ephemeral-test-only@db/interview_test
+      ADMIN_TOKEN: ephemeral-test-admin-token-only
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python","-m","unittest","discover","-v","-s","tests"]
